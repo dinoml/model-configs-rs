@@ -28,6 +28,7 @@ from typing import Any, Iterable, Sequence
 
 
 SCHEMA_VERSION = 1
+MAX_JSON_DEPTH = 120
 SUPPORTED_EXACT_NAMES = frozenset(
     {
         "adapter_config.json",
@@ -388,8 +389,31 @@ def _strict_json_loads(data: bytes) -> tuple[Any, list[str]]:
             result[key] = value
         return result
 
+    source = data.decode("utf-8")
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in source:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError(
+                    f"JSON recursion/nesting depth exceeds {MAX_JSON_DEPTH}"
+                )
+        elif character in "]}":
+            depth = max(0, depth - 1)
+
     document = json.loads(
-        data.decode("utf-8"),
+        source,
         parse_constant=reject_constant,
         object_pairs_hook=object_from_pairs,
     )

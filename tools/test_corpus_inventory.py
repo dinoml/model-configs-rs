@@ -336,6 +336,14 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(audit["invalid_json"][0]["path"], "owner/repo/config.json")
         self.assertIn("recursion", audit["invalid_json"][0]["message"].casefold())
 
+    def test_json_depth_scan_ignores_container_characters_inside_strings(self) -> None:
+        document, duplicate_keys = corpus_inventory._strict_json_loads(
+            b'{"value":"[[[{{{]}}}\\\"["}'
+        )
+
+        self.assertEqual(document, {"value": '[[[{{{]}}}"['})
+        self.assertEqual(duplicate_keys, [])
+
 
 class FetchSelectionTests(unittest.TestCase):
     def test_selects_supported_siblings_without_cache_paths(self) -> None:
