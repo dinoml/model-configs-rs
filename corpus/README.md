@@ -28,7 +28,22 @@ The audit recognizes these basenames at the repository root or any safe nested c
 - `chat_template.jinja`
 - `*.safetensors.index.json`
 
-Paths containing an empty segment, `.` or `..`, or a dot-prefixed segment are excluded. This omits Hugging Face `.cache` sidecars and prevents metadata from being mistaken for source configuration. Root files outside an `owner/repository` directory are also excluded.
+Paths must be relative UTF-8 slash-separated repository paths. Empty, `.`,
+`..`, dot-prefixed, backslash-containing, control-character, Windows-reserved,
+drive/prefix-like, trailing-dot/space, oversized segment, and oversized total
+path spellings are excluded before host-path conversion. This omits Hugging
+Face `.cache` sidecars and prevents metadata from being mistaken for source
+configuration. Root files outside an `owner/repository` directory are also
+excluded.
+
+Corpus owner, repository, component, and file entries must be ordinary
+directories or regular files. The audit fails on a symbolic link or Windows
+reparse point instead of traversing an alias. Fetches apply the same check to
+every existing target component and verify resolved containment before an
+atomic replacement, so a pre-existing alias cannot redirect a write outside
+the selected corpus root. Audit reads use a metadata precheck and the same
+bounded-reader fallback, so manually populated files above 64 MiB fail with
+their logical corpus path before they can become source evidence.
 
 JSON validation is strict UTF-8 JSON. In particular, bare `NaN`, `Infinity`, and `-Infinity` are reported as invalid even though Python's default JSON decoder accepts them. Duplicate object keys remain valid source JSON but are reported separately because last-key-wins normalization would otherwise lose information.
 
@@ -55,7 +70,15 @@ python tools/corpus_inventory.py fetch `
   --workers 8 --resume --limit 450
 ```
 
-Repeat that command until no `http_429`, transient per-file `partial`, or network statuses remain. A partial containing only `401` file results is permanent without authentication and is not retried. The manifest is revision-pinned and written atomically after each batch. Set `HF_TOKEN` to use authenticated Hub access; the token is sent as an authorization header and is never recorded.
+Repeat that command until no `http_429`, transient per-file `partial`, or
+network statuses remain. A partial containing only `401`, `too_large`, or
+`unsafe_filesystem_path` file results is permanent and is not retried. HTTP
+response bodies are read only through the v0.1 64 MiB source-document limit;
+one additional byte is inspected to produce the `too_large` outcome. The
+manifest is revision-pinned and written atomically after each batch. Set
+`HF_TOKEN` to use authenticated Hub access; the token is sent as an
+authorization header to the requested origin, stripped from cross-origin
+redirects, and never recorded.
 
 Separate resolved repositories from unresolved extraction candidates:
 

@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -126,7 +127,104 @@ PATH_LIKE_REPOSITORY_SUFFIXES = (
 
 MAX_REPOSITORY_PATH_BYTES = 1024
 MAX_REPOSITORY_PATH_SEGMENT_BYTES = 255
+MAX_SOURCE_DOCUMENT_BYTES = 64 * 1024 * 1024
 WINDOWS_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"}
+
+
+class ResponseTooLarge(Exception):
+    """A source body exceeded the v0.1 source-document byte limit."""
+
+    def __init__(self, max_bytes: int, source_path: str | None = None) -> None:
+        source = f"source document {source_path}" if source_path else "source body"
+        super().__init__(f"{source} exceeds {max_bytes} bytes")
+        self.max_bytes = max_bytes
+        self.source_path = source_path
+
+
+class UnsafeFilesystemPath(ValueError):
+    """A corpus path could escape or alias the requested filesystem root."""
+
+
+def _path_metadata(path: Path) -> os.stat_result | None:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    metadata = _path_metadata(path)
+    if metadata is None:
+        return False
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    file_attributes = getattr(metadata, "st_file_attributes", 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(file_attributes & reparse_flag)
+
+
+def _reject_link_or_reparse(path: Path, logical_path: str) -> None:
+    if _is_link_or_reparse(path):
+        raise UnsafeFilesystemPath(
+            f"corpus path is a symbolic link or reparse point: {logical_path}"
+        )
+
+
+def _require_within_root(root: Path, candidate: Path, logical_path: str) -> None:
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise UnsafeFilesystemPath(f"corpus path escapes its root: {logical_path}") from error
+
+
+def _prepare_corpus_root(corpus_root: Path, *, create: bool) -> Path:
+    metadata = _path_metadata(corpus_root)
+    if metadata is None:
+        if not create:
+            raise FileNotFoundError(corpus_root)
+        corpus_root.mkdir(parents=True, exist_ok=True)
+        metadata = _path_metadata(corpus_root)
+    _reject_link_or_reparse(corpus_root, ".")
+    if metadata is None or not stat.S_ISDIR(metadata.st_mode):
+        raise UnsafeFilesystemPath("corpus root is not a directory")
+    return corpus_root.resolve(strict=True)
+
+
+def _safe_corpus_target(corpus_root: Path, logical_parts: Sequence[str]) -> Path:
+    if not logical_parts:
+        raise UnsafeFilesystemPath("corpus target path is empty")
+    if any(
+        part in {"", ".", ".."}
+        or "/" in part
+        or "\\" in part
+        or not _portable_segment(part)
+        for part in logical_parts
+    ):
+        raise UnsafeFilesystemPath("corpus target contains an unsafe path segment")
+    root = _prepare_corpus_root(corpus_root, create=True)
+    current = corpus_root
+    for index, part in enumerate(logical_parts[:-1], start=1):
+        logical_path = "/".join(logical_parts[:index])
+        candidate = current / part
+        metadata = _path_metadata(candidate)
+        if metadata is None:
+            candidate.mkdir()
+            metadata = _path_metadata(candidate)
+        _reject_link_or_reparse(candidate, logical_path)
+        if metadata is None or not stat.S_ISDIR(metadata.st_mode):
+            raise UnsafeFilesystemPath(f"corpus path is not a directory: {logical_path}")
+        _require_within_root(root, candidate.resolve(strict=True), logical_path)
+        current = candidate
+
+    target = current / logical_parts[-1]
+    target_logical_path = "/".join(logical_parts)
+    metadata = _path_metadata(target)
+    if metadata is not None:
+        _reject_link_or_reparse(target, target_logical_path)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise UnsafeFilesystemPath(
+                f"corpus target is not a regular file: {target_logical_path}"
+            )
+    _require_within_root(root, target.resolve(strict=False), target_logical_path)
+    return target
 
 
 def _portable_segment(segment: str) -> bool:
@@ -332,6 +430,7 @@ def audit_corpus(
     duplicate_sample_limit: int = 5,
 ) -> dict[str, Any]:
     """Audit supported documents below two-segment owner/repository roots."""
+    resolved_corpus_root = _prepare_corpus_root(corpus_root, create=False)
     repository_ids = sorted(set(report_repository_ids), key=lambda value: (value.casefold(), value))
     requested_by_casefold = {repository_id.casefold(): repository_id for repository_id in repository_ids}
     coverage: dict[str, dict[str, Any]] = {
@@ -359,15 +458,28 @@ def audit_corpus(
     json_files = 0
     valid_json_files = 0
 
-    owner_directories = sorted(
-        (path for path in corpus_root.iterdir() if path.is_dir() and not path.name.startswith(".")),
-        key=lambda path: (path.name.casefold(), path.name),
-    )
+    owner_directories: list[Path] = []
+    for path in sorted(corpus_root.iterdir(), key=lambda entry: (entry.name.casefold(), entry.name)):
+        if path.name.startswith("."):
+            continue
+        _reject_link_or_reparse(path, path.name)
+        if path.is_dir():
+            _require_within_root(resolved_corpus_root, path.resolve(strict=True), path.name)
+            owner_directories.append(path)
     for owner_path in owner_directories:
-        child_directories = sorted(
-            (path for path in owner_path.iterdir() if path.is_dir() and not path.name.startswith(".")),
-            key=lambda path: (path.name.casefold(), path.name),
-        )
+        child_directories: list[Path] = []
+        for path in sorted(owner_path.iterdir(), key=lambda entry: (entry.name.casefold(), entry.name)):
+            if path.name.startswith("."):
+                continue
+            logical_path = f"{owner_path.name}/{path.name}"
+            _reject_link_or_reparse(path, logical_path)
+            if path.is_dir():
+                _require_within_root(
+                    resolved_corpus_root,
+                    path.resolve(strict=True),
+                    logical_path,
+                )
+                child_directories.append(path)
         for repository_path in child_directories:
             repository_directories += 1
             actual_id = f"{owner_path.name}/{repository_path.name}"
@@ -376,17 +488,52 @@ def audit_corpus(
             repository_kind_counts: dict[str, int] = defaultdict(int)
             repository_supported_files = 0
 
-            for current_root, directory_names, file_names in os.walk(repository_path):
-                directory_names[:] = sorted(name for name in directory_names if not name.startswith("."))
+            for current_root, directory_names, file_names in os.walk(
+                repository_path,
+                followlinks=False,
+            ):
+                current_path = Path(current_root)
+                current_logical_path = current_path.relative_to(corpus_root).as_posix()
+                _reject_link_or_reparse(current_path, current_logical_path)
+                _require_within_root(
+                    resolved_corpus_root,
+                    current_path.resolve(strict=True),
+                    current_logical_path,
+                )
+                safe_directory_names: list[str] = []
+                for directory_name in sorted(directory_names):
+                    if directory_name.startswith("."):
+                        continue
+                    directory_path = current_path / directory_name
+                    logical_path = directory_path.relative_to(corpus_root).as_posix()
+                    _reject_link_or_reparse(directory_path, logical_path)
+                    _require_within_root(
+                        resolved_corpus_root,
+                        directory_path.resolve(strict=True),
+                        logical_path,
+                    )
+                    safe_directory_names.append(directory_name)
+                directory_names[:] = safe_directory_names
                 for file_name in sorted(file_names):
-                    path = Path(current_root) / file_name
+                    path = current_path / file_name
+                    relative_to_corpus = path.relative_to(corpus_root).as_posix()
+                    _reject_link_or_reparse(path, relative_to_corpus)
+                    metadata = _path_metadata(path)
+                    if metadata is None or not stat.S_ISREG(metadata.st_mode):
+                        raise UnsafeFilesystemPath(
+                            f"corpus path is not a regular file: {relative_to_corpus}"
+                        )
+                    _require_within_root(
+                        resolved_corpus_root,
+                        path.resolve(strict=True),
+                        relative_to_corpus,
+                    )
                     relative_to_repository = path.relative_to(repository_path).as_posix()
                     kind = supported_kind(relative_to_repository)
                     if kind is None:
                         continue
 
-                    relative_to_corpus = path.relative_to(corpus_root).as_posix()
-                    data = path.read_bytes()
+                    data = _read_bounded_file(path, relative_to_corpus)
                     digest = hashlib.sha256(data).hexdigest()
                     supported_files += 1
                     repository_supported_files += 1
@@ -497,6 +644,69 @@ def select_supported_files(siblings: Iterable[dict[str, Any]]) -> list[str]:
     return sorted(selected, key=lambda value: (value.casefold(), value))
 
 
+def _url_origin(url: str) -> tuple[str, str | None, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    default_port = {"http": 80, "https": 443}.get(parsed.scheme.casefold())
+    port = parsed.port if parsed.port is not None else default_port
+    return (
+        parsed.scheme.casefold(),
+        parsed.hostname.casefold() if parsed.hostname else None,
+        port,
+    )
+
+
+class _SameOriginAuthorizationRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Preserve credentials only when an HTTP redirect stays on one origin."""
+
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        response: Any,
+        code: int,
+        message: str,
+        headers: Any,
+        new_url: str,
+    ) -> urllib.request.Request | None:
+        redirected = super().redirect_request(
+            request,
+            response,
+            code,
+            message,
+            headers,
+            new_url,
+        )
+        if redirected is not None and _url_origin(request.full_url) != _url_origin(
+            redirected.full_url
+        ):
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+HTTP_OPENER = urllib.request.build_opener(_SameOriginAuthorizationRedirectHandler())
+
+
+def _read_bounded_stream(stream: Any, max_bytes: int) -> bytes:
+    data = bytearray()
+    while len(data) <= max_bytes:
+        remaining = max_bytes + 1 - len(data)
+        chunk = stream.read(min(64 * 1024, remaining))
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+    raise ResponseTooLarge(max_bytes)
+
+
+def _read_bounded_file(path: Path, logical_path: str) -> bytes:
+    with path.open("rb") as source_file:
+        metadata = os.fstat(source_file.fileno())
+        if metadata.st_size > MAX_SOURCE_DOCUMENT_BYTES:
+            raise ResponseTooLarge(MAX_SOURCE_DOCUMENT_BYTES, logical_path)
+        try:
+            return _read_bounded_stream(source_file, MAX_SOURCE_DOCUMENT_BYTES)
+        except ResponseTooLarge as error:
+            raise ResponseTooLarge(error.max_bytes, logical_path) from error
+
+
 def _http_bytes(url: str, token: str | None, attempts: int = 6) -> tuple[bytes, Any]:
     headers = {"User-Agent": USER_AGENT}
     if token:
@@ -505,8 +715,8 @@ def _http_bytes(url: str, token: str | None, attempts: int = 6) -> tuple[bytes, 
         retry_delay = min(2**attempt, 30)
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                return response.read(), response.headers
+            with HTTP_OPENER.open(request, timeout=60) as response:
+                return _read_bounded_stream(response, MAX_SOURCE_DOCUMENT_BYTES), response.headers
         except urllib.error.HTTPError as error:
             if error.code not in {429, 500, 502, 503, 504} or attempt + 1 == attempts:
                 raise
@@ -524,19 +734,35 @@ def _http_bytes(url: str, token: str | None, attempts: int = 6) -> tuple[bytes, 
     raise RuntimeError("HTTP retry loop ended unexpectedly")
 
 
-def _write_bytes_if_changed(path: Path, data: bytes) -> str:
-    if path.is_file() and path.read_bytes() == data:
-        return "unchanged"
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _write_corpus_bytes_if_changed(
+    corpus_root: Path,
+    logical_parts: Sequence[str],
+    data: bytes,
+) -> str:
+    path = _safe_corpus_target(corpus_root, logical_parts)
+    metadata = _path_metadata(path)
+    if metadata is not None:
+        logical_path = "/".join(logical_parts)
+        if _read_bounded_file(path, logical_path) == data:
+            return "unchanged"
+    existed = metadata is not None
     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary_file:
         temporary_path = Path(temporary_file.name)
         temporary_file.write(data)
     try:
+        target_logical_path = "/".join(logical_parts)
+        _reject_link_or_reparse(path.parent, "/".join(logical_parts[:-1]))
+        resolved_root = _prepare_corpus_root(corpus_root, create=False)
+        _require_within_root(
+            resolved_root,
+            path.parent.resolve(strict=True),
+            target_logical_path,
+        )
         os.replace(temporary_path, path)
     finally:
         if temporary_path.exists():
             temporary_path.unlink()
-    return "updated" if path.exists() else "downloaded"
+    return "updated" if existed else "downloaded"
 
 
 def _fetch_repository(repository_id: str, corpus_root: Path, token: str | None) -> dict[str, Any]:
@@ -558,11 +784,12 @@ def _fetch_repository(repository_id: str, corpus_root: Path, token: str | None) 
             )
             try:
                 data, _ = _http_bytes(download_url, token)
-                target = corpus_root.joinpath(*repository_id.split("/"), *relative_path.split("/"))
-                existed = target.is_file()
-                write_status = _write_bytes_if_changed(target, data)
-                if not existed and write_status == "updated":
-                    write_status = "downloaded"
+                logical_parts = (*repository_id.split("/"), *relative_path.split("/"))
+                write_status = _write_corpus_bytes_if_changed(
+                    corpus_root,
+                    logical_parts,
+                    data,
+                )
                 files.append(
                     {
                         "path": relative_path,
@@ -571,6 +798,10 @@ def _fetch_repository(repository_id: str, corpus_root: Path, token: str | None) 
                         "sha256": hashlib.sha256(data).hexdigest(),
                     }
                 )
+            except ResponseTooLarge:
+                files.append({"path": relative_path, "status": "too_large"})
+            except UnsafeFilesystemPath:
+                files.append({"path": relative_path, "status": "unsafe_filesystem_path"})
             except urllib.error.HTTPError as error:
                 files.append({"path": relative_path, "status": f"http_{error.code}"})
             except (TimeoutError, urllib.error.URLError) as error:
@@ -578,6 +809,10 @@ def _fetch_repository(repository_id: str, corpus_root: Path, token: str | None) 
 
         status = "ok" if all(file["status"] in {"downloaded", "unchanged", "updated"} for file in files) else "partial"
         return {"id": repository_id, "status": status, "revision": revision, "files": files}
+    except ResponseTooLarge:
+        return {"id": repository_id, "status": "too_large"}
+    except UnsafeFilesystemPath:
+        return {"id": repository_id, "status": "unsafe_filesystem_path"}
     except urllib.error.HTTPError as error:
         status = {401: "unauthorized", 403: "forbidden", 404: "not_found"}.get(error.code, f"http_{error.code}")
         return {"id": repository_id, "status": status}
