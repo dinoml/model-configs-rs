@@ -72,13 +72,13 @@ impl ModelRepository {
     }
 
     fn generation_source_at(&self, scope: &Path) -> Option<SourceSelection<'_>> {
-        if let Some(document) = self.document(scope.join("generation_config.json")) {
+        if let Some(document) = self.document(scoped_path(scope, "generation_config.json")) {
             return Some(SourceSelection {
                 document,
                 json_pointer: None,
             });
         }
-        let config = self.document(scope.join("config.json"))?;
+        let config = self.document(scoped_path(scope, "config.json"))?;
         if config.has_duplicate_keys() {
             return None;
         }
@@ -159,7 +159,7 @@ impl ModelRepository {
         scope: &Path,
         inline_document: &str,
     ) -> Result<Option<ChatTemplateSelection<'_>>, ChatTemplateError> {
-        if let Some(document) = self.document(scope.join("chat_template.jinja")) {
+        if let Some(document) = self.document(scoped_path(scope, "chat_template.jinja")) {
             let content = document
                 .text()
                 .map_err(|source| ChatTemplateError::InvalidUtf8 {
@@ -177,7 +177,7 @@ impl ModelRepository {
                 },
             }));
         }
-        let Some(document) = self.document(scope.join(inline_document)) else {
+        let Some(document) = self.document(scoped_path(scope, inline_document)) else {
             return Ok(None);
         };
         if document.has_duplicate_keys() {
@@ -195,6 +195,14 @@ impl ModelRepository {
                 json_pointer: Some("/chat_template"),
             },
         }))
+    }
+}
+
+fn scoped_path(scope: &Path, filename: &str) -> String {
+    if scope.as_os_str().is_empty() {
+        filename.to_owned()
+    } else {
+        format!("{}/{filename}", crate::path_serde::portable(scope))
     }
 }
 

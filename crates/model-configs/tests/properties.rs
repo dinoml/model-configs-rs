@@ -49,7 +49,7 @@ proptest! {
     #[test]
     fn every_parent_traversal_document_path_is_rejected(depth in 1_usize..8) {
         let path = format!("{}config.json", "../".repeat(depth));
-        let empty_object = [b'{', b'}'];
+        let empty_object = *b"{}";
 
         prop_assert!(SourceDocument::parse(path, empty_object).is_err());
     }
