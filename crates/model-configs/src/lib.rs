@@ -25,7 +25,8 @@ pub use document::{
 };
 pub use error::{ChatTemplateError, ConfigError, NormalizationError, SelectionError};
 pub use manifest::{
-    CompatibilityManifest, MANIFEST_SCHEMA_VERSION, ManifestDocument, ManifestReadError,
+    CompatibilityManifest, MANIFEST_SCHEMA_VERSION, MAX_COMPATIBILITY_MANIFEST_BYTES,
+    ManifestDocument, ManifestReadError,
 };
 pub use normalize::{
     AppliedDefault, ArchitectureId, ArchitectureSource, ComponentReference, ModelRepositoryConfig,

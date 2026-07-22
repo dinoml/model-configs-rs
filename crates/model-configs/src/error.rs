@@ -82,6 +82,10 @@ pub enum ConfigError {
         /// Second colliding logical path.
         second: PathBuf,
     },
+    /// A repository path contains credential-like text that cannot cross the
+    /// compatibility-manifest boundary without losing identity fidelity.
+    #[error("repository contains a path that cannot be represented in a credential-safe manifest")]
+    ManifestSensitivePath,
 }
 
 /// A content-level error selecting an inert chat template.

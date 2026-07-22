@@ -363,7 +363,7 @@ fn portable_document_keys(documents: &[SourceDocument]) -> Vec<String> {
         .collect()
 }
 
-fn validate_no_portable_collisions(
+pub(crate) fn validate_no_portable_collisions(
     files: &[PathBuf],
     directories: &[PathBuf],
 ) -> Result<(), ConfigError> {

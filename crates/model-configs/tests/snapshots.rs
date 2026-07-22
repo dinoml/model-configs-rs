@@ -39,11 +39,11 @@ fn normalized_manifest_wire_shape() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let manifest = ModelRepository::read(temp.path())?.manifest()?;
     let projection = serde_json::json!({
-        "schema_version": manifest.schema_version,
-        "normalization_profile": manifest.normalization_profile,
-        "document_paths": manifest.documents.iter().map(model_configs::ManifestDocument::path).collect::<Vec<_>>(),
-        "normalized": manifest.normalized,
-        "diagnostics": manifest.diagnostics,
+        "schema_version": manifest.schema_version(),
+        "normalization_profile": manifest.normalization_profile(),
+        "document_paths": manifest.documents().iter().map(model_configs::ManifestDocument::path).collect::<Vec<_>>(),
+        "normalized": manifest.normalized(),
+        "diagnostics": manifest.diagnostics(),
     });
     let json = serde_json::to_string_pretty(&projection)?;
 

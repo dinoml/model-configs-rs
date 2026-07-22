@@ -11,19 +11,22 @@ use crate::{
 /// Current compatibility-manifest schema version.
 pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
 
+/// Maximum UTF-8 byte size accepted for one serialized compatibility manifest.
+pub const MAX_COMPATIBILITY_MANIFEST_BYTES: usize = 256 * 1024 * 1024;
+
 /// Deterministic compatibility description of a repository snapshot.
 #[derive(Clone, Debug, Serialize)]
 pub struct CompatibilityManifest {
     /// Manifest schema version.
-    pub schema_version: u32,
+    schema_version: u32,
     /// Versioned rule profile used to produce normalized values and defaults.
-    pub normalization_profile: String,
+    normalization_profile: String,
     /// Lossless source document identities and fingerprints.
-    pub documents: Vec<ManifestDocument>,
+    documents: Vec<ManifestDocument>,
     /// Normalized repository configuration, if normalization succeeded.
-    pub normalized: Option<ModelRepositoryConfig>,
+    normalized: Option<ModelRepositoryConfig>,
     /// Stable diagnostics produced for the snapshot.
-    pub diagnostics: Vec<Diagnostic>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl CompatibilityManifest {
@@ -32,6 +35,9 @@ impl CompatibilityManifest {
             .documents()
             .iter()
             .map(|document| {
+                if crate::normalize::manifest_sensitive_path(document.relative_path()) {
+                    return Err(ConfigError::ManifestSensitivePath);
+                }
                 Ok(ManifestDocument {
                     path: portable_path(document.relative_path())?,
                     kind: *document.kind(),
@@ -61,19 +67,37 @@ impl CompatibilityManifest {
                 "normalized manifest projection was omitted because an identity field contained source-sensitive text",
             );
             diagnostic.document_path = Some(source_path);
-            crate::diagnostic::push_bounded(&mut diagnostics, diagnostic);
+            push_priority_diagnostic(&mut diagnostics, diagnostic);
         }
         for diagnostic in &mut diagnostics {
-            if crate::normalize::manifest_sensitive_text(&diagnostic.message) {
-                diagnostic.message =
-                    "diagnostic message redacted because it contained source-sensitive text".into();
-            }
-            if diagnostic
+            let sensitive_document_path = diagnostic
+                .document_path
+                .as_deref()
+                .is_some_and(crate::normalize::manifest_sensitive_path);
+            let sensitive_related_path = diagnostic
+                .related_path
+                .as_deref()
+                .is_some_and(crate::normalize::manifest_sensitive_path);
+            let sensitive_json_path = diagnostic
                 .json_path
                 .as_ref()
-                .is_some_and(|path| crate::normalize::manifest_sensitive_json_pointer(path))
-            {
+                .is_some_and(|path| crate::normalize::manifest_sensitive_json_pointer(path));
+            if sensitive_document_path {
+                diagnostic.document_path = None;
+            }
+            if sensitive_related_path {
+                diagnostic.related_path = None;
+            }
+            if sensitive_json_path {
                 diagnostic.json_path = None;
+            }
+            if sensitive_document_path
+                || sensitive_related_path
+                || sensitive_json_path
+                || crate::normalize::manifest_sensitive_message(&diagnostic.message)
+            {
+                diagnostic.message =
+                    "diagnostic message redacted because it contained source-sensitive text".into();
             }
         }
         crate::diagnostic::sort_diagnostics(&mut diagnostics);
@@ -95,6 +119,36 @@ impl CompatibilityManifest {
         serde_json::to_string_pretty(self)
     }
 
+    /// Returns the compatibility-manifest schema version.
+    #[must_use]
+    pub const fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    /// Returns the versioned normalization profile.
+    #[must_use]
+    pub fn normalization_profile(&self) -> &str {
+        &self.normalization_profile
+    }
+
+    /// Returns the ordered exact-source fingerprints.
+    #[must_use]
+    pub fn documents(&self) -> &[ManifestDocument] {
+        &self.documents
+    }
+
+    /// Returns the credential-safe normalized projection, when available.
+    #[must_use]
+    pub const fn normalized(&self) -> Option<&ModelRepositoryConfig> {
+        self.normalized.as_ref()
+    }
+
+    /// Returns the ordered credential-safe diagnostics.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
+    }
+
     /// Decodes a compatibility manifest with explicit schema validation.
     ///
     /// Unknown fields are ignored within schema version 1. Unknown diagnostic
@@ -106,87 +160,10 @@ impl CompatibilityManifest {
     /// an unsupported schema version, resource-limit violations, or invalid
     /// document identity metadata.
     pub fn from_json(source: &str) -> Result<Self, ManifestReadError> {
-        if source.len() > crate::MAX_SOURCE_DOCUMENT_BYTES {
-            return Err(ManifestReadError::SourceTooLarge {
-                size: source.len(),
-                limit: crate::MAX_SOURCE_DOCUMENT_BYTES,
-            });
-        }
-        let duplicate_scan = crate::json_scan::duplicate_keys(source.as_bytes())?;
-        if !duplicate_scan.pointers.is_empty() || duplicate_scan.truncated {
-            return Err(ManifestReadError::DuplicateObjectMember {
-                path: duplicate_scan
-                    .pointers
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(|| "<location omitted>".into()),
-            });
-        }
-        let value: serde_json::Value = serde_json::from_str(source)?;
-        let schema_version = value
-            .get("schema_version")
-            .and_then(serde_json::Value::as_u64)
-            .ok_or(ManifestReadError::InvalidSchemaVersion)?;
-        if schema_version != u64::from(MANIFEST_SCHEMA_VERSION) {
-            return Err(ManifestReadError::UnsupportedSchemaVersion {
-                found: schema_version,
-            });
-        }
-        let wire: CompatibilityManifestWire = serde_json::from_value(value)?;
-        if wire.documents.len() > crate::MAX_REPOSITORY_DOCUMENTS {
-            return Err(ManifestReadError::DocumentLimit {
-                count: wire.documents.len(),
-                limit: crate::MAX_REPOSITORY_DOCUMENTS,
-            });
-        }
-        if wire.diagnostics.len() > crate::MAX_REPOSITORY_DIAGNOSTICS {
-            return Err(ManifestReadError::DiagnosticLimit {
-                count: wire.diagnostics.len(),
-                limit: crate::MAX_REPOSITORY_DIAGNOSTICS,
-            });
-        }
-        let mut documents = Vec::with_capacity(wire.documents.len());
-        let mut paths = BTreeSet::new();
-        for document in wire.documents {
-            let path = Path::new(&document.path);
-            if crate::path_serde::validate(path).is_err() {
-                return Err(ManifestReadError::UnsafeDocumentPath {
-                    path: document.path,
-                });
-            }
-            let Some(expected_kind) = DocumentKind::for_path(path) else {
-                return Err(ManifestReadError::UnsupportedDocumentPath {
-                    path: document.path,
-                });
-            };
-            if document.kind != expected_kind {
-                return Err(ManifestReadError::DocumentKindMismatch {
-                    path: document.path,
-                    expected: expected_kind,
-                    found: document.kind,
-                });
-            }
-            if !paths.insert(document.path.clone()) {
-                return Err(ManifestReadError::DuplicateDocumentPath {
-                    path: document.path,
-                });
-            }
-            if document.sha256.len() != 64
-                || !document.sha256.bytes().all(|byte| {
-                    byte.is_ascii_digit() || (byte.is_ascii_hexdigit() && byte.is_ascii_lowercase())
-                })
-            {
-                return Err(ManifestReadError::InvalidDocumentDigest {
-                    path: document.path.clone(),
-                });
-            }
-            documents.push(ManifestDocument {
-                path: document.path,
-                kind: document.kind,
-                sha256: document.sha256,
-                size: document.size,
-            });
-        }
+        let wire = parse_manifest_wire(source)?;
+        validate_manifest_wire(&wire)?;
+        let documents = validate_manifest_documents(&wire.documents)?;
+        validate_manifest_relationships(&wire, &documents)?;
         Ok(Self {
             schema_version: wire.schema_version,
             normalization_profile: wire.normalization_profile,
@@ -195,6 +172,183 @@ impl CompatibilityManifest {
             diagnostics: wire.diagnostics,
         })
     }
+}
+
+fn push_priority_diagnostic(diagnostics: &mut Vec<Diagnostic>, diagnostic: Diagnostic) {
+    if crate::diagnostic::push_bounded(diagnostics, diagnostic.clone()) {
+        return;
+    }
+    let replacement = diagnostics
+        .iter()
+        .rposition(|entry| entry.code != crate::DiagnosticCode::DiagnosticLimitReached)
+        .unwrap_or_else(|| diagnostics.len().saturating_sub(1));
+    if let Some(entry) = diagnostics.get_mut(replacement) {
+        *entry = diagnostic;
+    }
+}
+
+fn parse_manifest_wire(source: &str) -> Result<CompatibilityManifestWire, ManifestReadError> {
+    if source.len() > MAX_COMPATIBILITY_MANIFEST_BYTES {
+        return Err(ManifestReadError::SourceTooLarge {
+            size: source.len(),
+            limit: MAX_COMPATIBILITY_MANIFEST_BYTES,
+        });
+    }
+    let duplicate_scan = crate::json_scan::duplicate_keys(source.as_bytes())?;
+    if !duplicate_scan.pointers.is_empty() || duplicate_scan.truncated {
+        return Err(ManifestReadError::DuplicateObjectMember {
+            path: duplicate_scan
+                .pointers
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "<location omitted>".into()),
+        });
+    }
+    let value: serde_json::Value = serde_json::from_str(source)?;
+    let schema_version = value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(ManifestReadError::InvalidSchemaVersion)?;
+    if schema_version != u64::from(MANIFEST_SCHEMA_VERSION) {
+        return Err(ManifestReadError::UnsupportedSchemaVersion {
+            found: schema_version,
+        });
+    }
+    serde_json::from_value(value).map_err(ManifestReadError::from)
+}
+
+fn validate_manifest_wire(wire: &CompatibilityManifestWire) -> Result<(), ManifestReadError> {
+    if wire.normalization_profile.is_empty()
+        || wire.normalization_profile.len() > crate::MAX_DIAGNOSTIC_TEXT_BYTES
+        || crate::normalize::manifest_sensitive_message(&wire.normalization_profile)
+    {
+        return Err(ManifestReadError::InvalidNormalizationProfile);
+    }
+    if wire.documents.len() > crate::MAX_REPOSITORY_DOCUMENTS {
+        return Err(ManifestReadError::DocumentLimit {
+            count: wire.documents.len(),
+            limit: crate::MAX_REPOSITORY_DOCUMENTS,
+        });
+    }
+    if wire.diagnostics.len() > crate::MAX_REPOSITORY_DIAGNOSTICS {
+        return Err(ManifestReadError::DiagnosticLimit {
+            count: wire.diagnostics.len(),
+            limit: crate::MAX_REPOSITORY_DIAGNOSTICS,
+        });
+    }
+    let sensitive_normalized = wire.normalized.as_ref().is_some_and(|normalized| {
+        crate::normalize::manifest_safe(normalized.clone()).as_ref() != Some(normalized)
+    });
+    let sensitive_diagnostic = wire.diagnostics.iter().any(|diagnostic| {
+        crate::normalize::manifest_sensitive_message(&diagnostic.message)
+            || diagnostic
+                .document_path()
+                .is_some_and(crate::normalize::manifest_sensitive_path)
+            || diagnostic
+                .related_path()
+                .is_some_and(crate::normalize::manifest_sensitive_path)
+            || diagnostic
+                .json_path
+                .as_ref()
+                .is_some_and(|path| crate::normalize::manifest_sensitive_json_pointer(path))
+    });
+    if sensitive_normalized || sensitive_diagnostic {
+        return Err(ManifestReadError::SensitiveContent);
+    }
+    Ok(())
+}
+
+fn validate_manifest_documents(
+    wire_documents: &[ManifestDocumentWire],
+) -> Result<Vec<ManifestDocument>, ManifestReadError> {
+    let mut documents = Vec::with_capacity(wire_documents.len());
+    let mut paths = BTreeSet::new();
+    let mut portable_paths = Vec::with_capacity(wire_documents.len());
+    let mut total_size = 0_u64;
+    for document in wire_documents {
+        let path = Path::new(&document.path);
+        validate_manifest_document(document, path, &mut paths)?;
+        total_size = total_size.saturating_add(document.size);
+        if total_size > crate::MAX_REPOSITORY_SOURCE_BYTES {
+            return Err(ManifestReadError::AggregateDocumentBytesLimit {
+                size: total_size,
+                limit: crate::MAX_REPOSITORY_SOURCE_BYTES,
+            });
+        }
+        portable_paths.push(path.to_path_buf());
+        documents.push(ManifestDocument {
+            path: document.path.clone(),
+            kind: document.kind,
+            sha256: document.sha256.clone(),
+            size: document.size,
+        });
+    }
+    crate::repository::validate_no_portable_collisions(&portable_paths, &[])
+        .map_err(|_| ManifestReadError::NonPortableDocumentPaths)?;
+    Ok(documents)
+}
+
+fn validate_manifest_document(
+    document: &ManifestDocumentWire,
+    path: &Path,
+    paths: &mut BTreeSet<String>,
+) -> Result<(), ManifestReadError> {
+    if crate::path_serde::validate(path).is_err() {
+        return Err(ManifestReadError::UnsafeDocumentPath {
+            path: document.path.clone(),
+        });
+    }
+    if crate::normalize::manifest_sensitive_path(path) {
+        return Err(ManifestReadError::SensitiveContent);
+    }
+    if document.size > crate::MAX_SOURCE_DOCUMENT_BYTES as u64 {
+        return Err(ManifestReadError::DocumentSourceTooLarge {
+            path: document.path.clone(),
+            size: document.size,
+            limit: crate::MAX_SOURCE_DOCUMENT_BYTES as u64,
+        });
+    }
+    let Some(expected_kind) = DocumentKind::for_path(path) else {
+        return Err(ManifestReadError::UnsupportedDocumentPath {
+            path: document.path.clone(),
+        });
+    };
+    if document.kind != expected_kind {
+        return Err(ManifestReadError::DocumentKindMismatch {
+            path: document.path.clone(),
+            expected: expected_kind,
+            found: document.kind,
+        });
+    }
+    if !paths.insert(document.path.clone()) {
+        return Err(ManifestReadError::DuplicateDocumentPath {
+            path: document.path.clone(),
+        });
+    }
+    if document.sha256.len() != 64
+        || !document.sha256.bytes().all(|byte| {
+            byte.is_ascii_digit() || (byte.is_ascii_hexdigit() && byte.is_ascii_lowercase())
+        })
+    {
+        return Err(ManifestReadError::InvalidDocumentDigest {
+            path: document.path.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_manifest_relationships(
+    wire: &CompatibilityManifestWire,
+    documents: &[ManifestDocument],
+) -> Result<(), ManifestReadError> {
+    let Some(normalized) = wire.normalized.as_ref() else {
+        return Ok(());
+    };
+    let source = crate::path_serde::portable(normalized.source_path());
+    if documents.iter().all(|document| document.path != source) {
+        return Err(ManifestReadError::MissingNormalizedSourceDocument);
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -236,6 +390,9 @@ pub enum ManifestReadError {
         /// Unrecognized source schema version.
         found: u64,
     },
+    /// The normalization profile is empty, oversized, or source-sensitive.
+    #[error("compatibility manifest has an invalid normalization profile")]
+    InvalidNormalizationProfile,
     /// The serialized manifest exceeds the bounded parser input size.
     #[error("compatibility manifest is {size} bytes, exceeding the {limit}-byte limit")]
     SourceTooLarge {
@@ -254,6 +411,26 @@ pub enum ManifestReadError {
         /// Maximum accepted document count.
         limit: usize,
     },
+    /// One document fingerprint claims a source larger than the source parser accepts.
+    #[error(
+        "compatibility manifest document {path} is {size} bytes, exceeding the {limit}-byte limit"
+    )]
+    DocumentSourceTooLarge {
+        /// Safe repository-relative document path.
+        path: String,
+        /// Claimed exact source size.
+        size: u64,
+        /// Maximum accepted source size.
+        limit: u64,
+    },
+    /// Aggregate claimed source bytes exceed the repository retention limit.
+    #[error("compatibility manifest claims {size} source bytes, exceeding the {limit}-byte limit")]
+    AggregateDocumentBytesLimit {
+        /// Claimed aggregate exact source bytes.
+        size: u64,
+        /// Maximum accepted aggregate source bytes.
+        limit: u64,
+    },
     /// A manifest carries more diagnostics than one validation pass may emit.
     #[error(
         "compatibility manifest contains {count} diagnostics, exceeding the {limit}-diagnostic limit"
@@ -264,6 +441,9 @@ pub enum ManifestReadError {
         /// Maximum accepted diagnostic count.
         limit: usize,
     },
+    /// Serialized content violates the credential-safe manifest boundary.
+    #[error("compatibility manifest contains source-sensitive content")]
+    SensitiveContent,
     /// A document entry contains a non-portable repository path.
     #[error("compatibility manifest document path is not portable: {path}")]
     UnsafeDocumentPath {
@@ -294,6 +474,12 @@ pub enum ManifestReadError {
         /// Repeated repository-relative path.
         path: String,
     },
+    /// Document paths collide under portable host materialization.
+    #[error("compatibility manifest document paths are not jointly portable")]
+    NonPortableDocumentPaths,
+    /// The normalized authoritative source has no corresponding fingerprint entry.
+    #[error("compatibility manifest normalized source has no document fingerprint")]
+    MissingNormalizedSourceDocument,
     /// A document entry does not contain a lowercase SHA-256 digest.
     #[error("compatibility manifest document has an invalid SHA-256 digest: {path}")]
     InvalidDocumentDigest {

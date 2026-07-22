@@ -37,6 +37,7 @@ impl fmt::Display for ArchitectureId {
 
 /// Exact source field used to identify the normalized architecture.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum ArchitectureSource {
     /// Root `model_index.json#/_class_name`.
@@ -236,7 +237,8 @@ pub(crate) fn normalize(
 }
 
 pub(crate) fn manifest_safe(mut config: ModelRepositoryConfig) -> Option<ModelRepositoryConfig> {
-    let identity_is_sensitive = manifest_sensitive_text(config.architecture.as_str())
+    let identity_is_sensitive = manifest_sensitive_path(config.source_path())
+        || manifest_sensitive_text(config.architecture.as_str())
         || config
             .model_type
             .as_deref()
@@ -252,6 +254,7 @@ pub(crate) fn manifest_safe(mut config: ModelRepositoryConfig) -> Option<ModelRe
         || matches!(&config.task, Some(TaskKind::Other(value)) if manifest_sensitive_text(value))
         || config.components.iter().any(|component| {
             manifest_sensitive_text(&component.name)
+                || component.path().is_some_and(manifest_sensitive_path)
                 || component
                     .library
                     .as_deref()
@@ -271,6 +274,15 @@ pub(crate) fn manifest_safe(mut config: ModelRepositoryConfig) -> Option<ModelRe
         redact_json(value);
         true
     });
+    config.applied_defaults.retain_mut(|default| {
+        if manifest_sensitive_json_pointer(&default.field)
+            || manifest_sensitive_message(&default.rule)
+        {
+            return false;
+        }
+        redact_json(&mut default.value);
+        true
+    });
     Some(config)
 }
 
@@ -287,21 +299,77 @@ pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
             .next()
             .is_some_and(|authority| authority.contains('@'))
     });
-    let url_query_has_secret = value.contains("://")
-        && ["token=", "key=", "secret=", "password="]
-            .iter()
-            .any(|marker| lower.contains(marker));
+    let url_query_has_secret = value.contains("://") && manifest_sensitive_url_query(value);
     value.starts_with(['/', '\\', '~'])
         || lower.starts_with("file://")
         || windows_absolute
         || lower.contains("/.cache/huggingface")
         || lower.contains("\\.cache\\huggingface")
-        || lower.starts_with("bearer ")
-        || (lower.starts_with("hf_")
-            && value.len() >= 20
-            && value[3..].bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        || lower.contains("bearer ")
+        || contains_hf_token(value)
         || authority_has_userinfo
         || url_query_has_secret
+}
+
+pub(crate) fn manifest_sensitive_message(value: &str) -> bool {
+    manifest_sensitive_text(value)
+        || value.split_whitespace().any(|word| {
+            let word = word.trim_matches(|character: char| {
+                matches!(
+                    character,
+                    '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ','
+                )
+            });
+            manifest_sensitive_text(word)
+        })
+}
+
+pub(crate) fn manifest_sensitive_path(value: &Path) -> bool {
+    value.iter().any(|segment| {
+        segment.to_str().is_none_or(|segment| {
+            manifest_sensitive_key(segment) || manifest_sensitive_text(segment)
+        })
+    })
+}
+
+fn contains_hf_token(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (0..bytes.len().saturating_sub(2)).any(|start| {
+        bytes[start..start + 3].eq_ignore_ascii_case(b"hf_")
+            && bytes[start + 3..]
+                .iter()
+                .take_while(|byte| byte.is_ascii_alphanumeric())
+                .count()
+                >= 17
+    })
+}
+
+fn manifest_sensitive_url_query(value: &str) -> bool {
+    let Some((_base, query)) = value.split_once('?') else {
+        return false;
+    };
+    query
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .split(['&', ';'])
+        .filter_map(|parameter| parameter.split_once('=').map(|(name, _value)| name))
+        .any(|name| {
+            let name = name
+                .to_ascii_lowercase()
+                .replace("%2d", "-")
+                .replace("%5f", "_");
+            let compact = name
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>();
+            matches!(compact.as_str(), "key" | "sig" | "sas")
+                || compact.contains("token")
+                || compact.contains("secret")
+                || compact.contains("password")
+                || compact.contains("credential")
+                || compact.contains("signature")
+        })
 }
 
 pub(crate) fn manifest_sensitive_json_pointer(value: &str) -> bool {
@@ -357,7 +425,15 @@ fn manifest_sensitive_key(key: &str) -> bool {
         || compact.contains("password")
         || compact.contains("credential")
         || compact.ends_with("secret")
-        || compact.ends_with("apikey")
+        || compact.contains("clientsecret")
+        || compact.contains("secretkey")
+        || compact.contains("privatekey")
+        || compact.contains("apikey")
+        || compact.contains("accesskey")
+        || compact.contains("authtoken")
+        || compact.contains("accesstoken")
+        || compact.contains("apitoken")
+        || compact.contains("hftoken")
         || (!safe_special_token && compact.ends_with("token"))
 }
 
