@@ -206,7 +206,7 @@ def _safe_corpus_target(corpus_root: Path, logical_parts: Sequence[str]) -> Path
         candidate = current / part
         metadata = _path_metadata(candidate)
         if metadata is None:
-            candidate.mkdir()
+            candidate.mkdir(exist_ok=True)
             metadata = _path_metadata(candidate)
         _reject_link_or_reparse(candidate, logical_path)
         if metadata is None or not stat.S_ISDIR(metadata.st_mode):
@@ -829,7 +829,7 @@ def fetch_repositories(
     token: str | None = None,
 ) -> dict[str, Any]:
     """Fetch all supported files at each repository's resolved revision."""
-    unique_ids = sorted(set(repository_ids), key=lambda value: (value.casefold(), value))
+    unique_ids = _casefold_unique(repository_ids)
     results: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
@@ -853,20 +853,36 @@ def fetch_repositories(
 
 def merge_fetch_manifests(previous: dict[str, Any], retried: dict[str, Any]) -> dict[str, Any]:
     """Replace retried repository records while retaining prior successful records."""
-    entries = {
-        entry["id"]: entry
-        for entry in previous.get("repositories", [])
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
-    }
-    for entry in retried.get("repositories", []):
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str):
-            entries[entry["id"]] = entry
+    entries = _entries_by_casefold(previous.get("repositories", []))
+    entries.update(_entries_by_casefold(retried.get("repositories", [])))
     return {
         "schema_version": retried.get("schema_version", previous.get("schema_version", SCHEMA_VERSION)),
         "source": retried.get("source", previous.get("source", "huggingface.co")),
         "selection": retried.get("selection", previous.get("selection", [])),
-        "repositories": [entries[key] for key in sorted(entries, key=lambda value: (value.casefold(), value))],
+        "repositories": sorted(
+            entries.values(),
+            key=lambda entry: (entry["id"].casefold(), entry["id"]),
+        ),
     }
+
+
+def _casefold_unique(repository_ids: Iterable[str]) -> list[str]:
+    unique: dict[str, str] = {}
+    for repository_id in sorted(repository_ids, key=lambda value: (value.casefold(), value)):
+        unique.setdefault(repository_id.casefold(), repository_id)
+    return list(unique.values())
+
+
+def _entries_by_casefold(entries: Any) -> dict[str, dict[str, Any]]:
+    valid = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    ]
+    selected: dict[str, dict[str, Any]] = {}
+    for entry in sorted(valid, key=lambda item: (item["id"].casefold(), item["id"])):
+        selected.setdefault(entry["id"].casefold(), entry)
+    return selected
 
 
 def resolve_report_candidates(

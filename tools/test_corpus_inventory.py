@@ -10,6 +10,7 @@ import tempfile
 import threading
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -313,6 +314,49 @@ class FetchSelectionTests(unittest.TestCase):
             ],
         )
 
+    def test_fetch_and_merge_deduplicate_repository_ids_by_casefold(self) -> None:
+        calls: list[str] = []
+
+        def fake_fetch(
+            repository_id: str,
+            corpus_root: Path,
+            token: str | None,
+        ) -> dict[str, object]:
+            del corpus_root, token
+            calls.append(repository_id)
+            return {"id": repository_id, "status": "ok"}
+
+        with tempfile.TemporaryDirectory() as temporary_directory, mock.patch.object(
+            corpus_inventory,
+            "_fetch_repository",
+            side_effect=fake_fetch,
+        ):
+            fetched = corpus_inventory.fetch_repositories(
+                Path(temporary_directory),
+                ["dynamic/yarn", "Dynamic/YARN", "other/repo"],
+                workers=2,
+            )
+
+        self.assertEqual(sorted(value.casefold() for value in calls), ["dynamic/yarn", "other/repo"])
+        self.assertEqual(len(fetched["repositories"]), 2)
+
+        merged = corpus_inventory.merge_fetch_manifests(
+            {
+                "repositories": [
+                    {"id": "Dynamic/YARN", "status": "old"},
+                    {"id": "other/repo", "status": "kept"},
+                ]
+            },
+            {"repositories": [{"id": "dynamic/yarn", "status": "new"}]},
+        )
+        self.assertEqual(
+            merged["repositories"],
+            [
+                {"id": "dynamic/yarn", "status": "new"},
+                {"id": "other/repo", "status": "kept"},
+            ],
+        )
+
     def test_resume_does_not_retry_permanent_partial_download_failures(self) -> None:
         self.assertFalse(
             corpus_inventory._retryable_fetch_entry(
@@ -436,6 +480,30 @@ class FetchSelectionTests(unittest.TestCase):
                     ("owner", "repo", "config.json"),
                     b"{}\n",
                 )
+
+    def test_parallel_fetch_writes_can_create_one_shared_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            corpus_root = Path(temporary_directory)
+
+            def write(repository: str) -> str:
+                return corpus_inventory._write_corpus_bytes_if_changed(
+                    corpus_root,
+                    ("owner", repository, "config.json"),
+                    b"{}\n",
+                )
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                statuses = list(executor.map(write, ["first", "second"]))
+
+            self.assertEqual(statuses, ["downloaded", "downloaded"])
+            self.assertEqual(
+                (corpus_root / "owner" / "first" / "config.json").read_bytes(),
+                b"{}\n",
+            )
+            self.assertEqual(
+                (corpus_root / "owner" / "second" / "config.json").read_bytes(),
+                b"{}\n",
+            )
 
     def test_cross_origin_redirect_does_not_forward_authorization(self) -> None:
         target_authorization: list[str | None] = []
