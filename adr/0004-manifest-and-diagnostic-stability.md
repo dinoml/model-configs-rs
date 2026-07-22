@@ -33,6 +33,14 @@ timestamp, credential, network URL with secrets, whole source document, or chat
 template body. For a fixed crate version, schema, profile, and source inventory,
 serialization is deterministic.
 
+To enforce that boundary, manifest generation filters a clone of normalized
+`extra` while leaving source documents and `ModelRepository::normalized`
+unchanged. Provenance paths, chat templates, credential-bearing keys, and
+sensitive nested strings are omitted or replaced with `"<redacted>"` under the
+rules in RFC 0001. A sensitive required identity suppresses the whole normalized
+manifest projection and emits a stable diagnostic instead of producing an
+internally inconsistent partial identity.
+
 Pretty manifest JSON is for interchange and inspection, not cross-version byte
 fingerprinting: diagnostic prose and compatible optional fields may change.
 Exact document hashes are the stable source evidence. A separately specified

@@ -68,6 +68,8 @@ pub enum DiagnosticCode {
     InvalidTextEncoding,
     /// Additional findings were omitted after the bounded diagnostic limit.
     DiagnosticLimitReached,
+    /// A normalized manifest projection was omitted to avoid sensitive identity data.
+    ManifestSensitiveDataOmitted,
     /// A newer manifest used a diagnostic code unknown to this crate version.
     #[serde(other)]
     Unknown,
@@ -99,6 +101,7 @@ impl DiagnosticCode {
             Self::ExecutableReferenceInert => "executable_reference_inert",
             Self::InvalidTextEncoding => "invalid_text_encoding",
             Self::DiagnosticLimitReached => "diagnostic_limit_reached",
+            Self::ManifestSensitiveDataOmitted => "manifest_sensitive_data_omitted",
             Self::Unknown => "unknown",
         }
     }

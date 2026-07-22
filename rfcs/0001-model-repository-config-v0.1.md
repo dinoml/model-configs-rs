@@ -613,6 +613,18 @@ versions, explicit task, sorted components, sorted `extra`, and sorted applied
 defaults. It does not contain a host root, timestamp, cache path, credential, or
 ambient library version.
 
+The manifest uses a security-filtered clone of normalized `extra`; it does not
+change `ModelRepository::normalized` or any source/typed view. Source-only keys
+such as `_name_or_path`, `chat_template`, authorization/token/password/secret
+fields, and credential-like nested keys are omitted. Nested strings that are
+absolute host/cache paths, bearer or Hugging Face access tokens, or URLs with
+userinfo or credential query parameters become the literal `"<redacted>"`.
+These rules are recursive and deterministic. If a required normalized identity
+field itself contains source-sensitive text, the manifest records
+`normalized: null` plus `manifest_sensitive_data_omitted`; it never emits a
+partially redacted, internally inconsistent identity record. Exact source bytes
+remain represented by the document digest and available from the repository.
+
 Diagnostics use the structured contract above. Manifest JSON object and array
 ordering is deterministic for a fixed schema, profile, crate version, and input.
 Pretty-print whitespace and human diagnostic messages are not a durable content

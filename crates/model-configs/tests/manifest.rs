@@ -48,6 +48,25 @@ fn manifest_reader_rejects_unknown_schema_versions() {
 }
 
 #[test]
+fn manifest_reader_rejects_duplicate_schema_and_document_members() {
+    let duplicate_schema = CompatibilityManifest::from_json(
+        r#"{"schema_version":2,"schema_version":1,"normalization_profile":"dinoml-v1","documents":[],"normalized":null,"diagnostics":[]}"#,
+    );
+    let duplicate_path = CompatibilityManifest::from_json(
+        r#"{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[{"path":"config.json","path":"other/config.json","kind":"config","sha256":"0000000000000000000000000000000000000000000000000000000000000000","size":0}],"normalized":null,"diagnostics":[]}"#,
+    );
+
+    assert!(matches!(
+        duplicate_schema,
+        Err(ManifestReadError::DuplicateObjectMember { .. })
+    ));
+    assert!(matches!(
+        duplicate_path,
+        Err(ManifestReadError::DuplicateObjectMember { .. })
+    ));
+}
+
+#[test]
 fn manifest_reader_ignores_unknown_fields_and_codes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"{
         "schema_version": 1,
@@ -129,5 +148,74 @@ fn manifest_carries_schema_version_and_exact_source_fingerprint()
         manifest.documents[0].sha256(),
         "643e010a3d5314680744b54eb3389b403dc85a434126e0f9bd7ea0f73e6aabcd"
     );
+    Ok(())
+}
+
+#[test]
+fn manifest_projection_omits_source_only_secrets_paths_and_templates()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    fs::write(
+        temp.path().join("config.json"),
+        r#"{
+            "model_type":"hf_transformers",
+            "_name_or_path":"C:\\Users\\alice\\.cache\\huggingface\\model",
+            "token":"hf_abcdefghijklmnopqrstuvwxyz123456",
+            "chat_template":"{{ secret_template_marker }}",
+            "future":{
+                "posix":"/home/alice/.cache/huggingface/model",
+                "endpoint":"https://user:secret@host/model",
+                "safe":"hf_transformers"
+            }
+        }"#,
+    )?;
+    let repository = ModelRepository::read(temp.path())?;
+    let source_normalized = repository.normalized()?;
+    assert!(source_normalized.extra.contains_key("_name_or_path"));
+    assert!(source_normalized.extra.contains_key("chat_template"));
+    assert!(source_normalized.extra.contains_key("token"));
+
+    let manifest = repository.manifest()?;
+    let normalized = manifest
+        .normalized
+        .as_ref()
+        .ok_or("missing normalized view")?;
+    assert!(!normalized.extra.contains_key("_name_or_path"));
+    assert!(!normalized.extra.contains_key("chat_template"));
+    assert!(!normalized.extra.contains_key("token"));
+    assert_eq!(normalized.extra["future"]["posix"], "<redacted>");
+    assert_eq!(normalized.extra["future"]["endpoint"], "<redacted>");
+    assert_eq!(normalized.extra["future"]["safe"], "hf_transformers");
+    let json = manifest.to_json_pretty()?;
+    for secret in [
+        "secret_template_marker",
+        "user:secret",
+        "Users\\\\alice",
+        "/home/alice",
+        "hf_abcdefghijklmnopqrstuvwxyz123456",
+    ] {
+        assert!(!json.contains(secret), "manifest leaked {secret}");
+    }
+    Ok(())
+}
+
+#[test]
+fn sensitive_identity_omission_is_explicitly_diagnosed() -> Result<(), Box<dyn std::error::Error>> {
+    let document = model_configs::SourceDocument::parse(
+        "config.json",
+        br#"{"model_type":"https://user:secret@host/model"}"#,
+    )?;
+    let repository = ModelRepository::from_documents(vec![document])?;
+    assert!(repository.normalized().is_ok());
+
+    let manifest = repository.manifest()?;
+    assert!(manifest.normalized.is_none());
+    assert!(
+        manifest
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code == DiagnosticCode::ManifestSensitiveDataOmitted })
+    );
+    assert!(!manifest.to_json_pretty()?.contains("user:secret"));
     Ok(())
 }

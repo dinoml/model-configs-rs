@@ -40,11 +40,28 @@ impl CompatibilityManifest {
             })
             .collect::<Result<Vec<_>, ConfigError>>()?;
         documents.sort_by(|left, right| left.path.cmp(&right.path));
-        let normalized = repository
-            .normalized()
-            .ok()
-            .and_then(crate::normalize::manifest_safe);
+        let (normalized, sensitive_identity_omitted) =
+            repository
+                .normalized()
+                .ok()
+                .map_or((None, None), |normalized| {
+                    let source_path = normalized.source_path().to_path_buf();
+                    (
+                        crate::normalize::manifest_safe(normalized),
+                        Some(source_path),
+                    )
+                });
+        let sensitive_identity_omitted =
+            sensitive_identity_omitted.filter(|_| normalized.is_none());
         let mut diagnostics = repository.diagnostics();
+        if let Some(source_path) = sensitive_identity_omitted {
+            let mut diagnostic = Diagnostic::warning(
+                crate::DiagnosticCode::ManifestSensitiveDataOmitted,
+                "normalized manifest projection was omitted because an identity field contained source-sensitive text",
+            );
+            diagnostic.document_path = Some(source_path);
+            crate::diagnostic::push_bounded(&mut diagnostics, diagnostic);
+        }
         for diagnostic in &mut diagnostics {
             if crate::normalize::manifest_sensitive_text(&diagnostic.message) {
                 diagnostic.message =
@@ -58,6 +75,7 @@ impl CompatibilityManifest {
                 diagnostic.json_path = None;
             }
         }
+        crate::diagnostic::sort_diagnostics(&mut diagnostics);
         Ok(Self {
             schema_version: MANIFEST_SCHEMA_VERSION,
             normalization_profile: NORMALIZATION_PROFILE.to_owned(),
@@ -86,6 +104,16 @@ impl CompatibilityManifest {
     /// Returns an error for malformed JSON, a missing or invalid schema version,
     /// an unsupported schema version, or a non-portable repository path.
     pub fn from_json(source: &str) -> Result<Self, ManifestReadError> {
+        let duplicate_scan = crate::json_scan::duplicate_keys(source.as_bytes())?;
+        if !duplicate_scan.pointers.is_empty() || duplicate_scan.truncated {
+            return Err(ManifestReadError::DuplicateObjectMember {
+                path: duplicate_scan
+                    .pointers
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| "<location omitted>".into()),
+            });
+        }
         let value: serde_json::Value = serde_json::from_str(source)?;
         let schema_version = value
             .get("schema_version")
@@ -155,6 +183,12 @@ pub enum ManifestReadError {
     /// The input is not valid manifest JSON.
     #[error("invalid compatibility manifest JSON: {0}")]
     Json(#[from] serde_json::Error),
+    /// An object repeats a member and therefore has ambiguous semantics.
+    #[error("compatibility manifest repeats an object member at {path}")]
+    DuplicateObjectMember {
+        /// First retained duplicate-key JSON Pointer.
+        path: String,
+    },
     /// `schema_version` is absent or not a non-negative integer.
     #[error("compatibility manifest requires an integer schema_version")]
     InvalidSchemaVersion,
