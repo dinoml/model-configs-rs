@@ -2,6 +2,12 @@
   "schema_version": 1,
   "report_count": 521,
   "repository_count": 1718,
+  "report_sources": [
+    {
+      "repository": "https://github.com/hlky/dinoml_v2_agents",
+      "revision": "27580a452b8890fe0c72a5546c75ee7844c9aaa2"
+    }
+  ],
   "repositories": [
     {
       "id": "1024m/Phi-3.5-MoE-4bit-nf4",

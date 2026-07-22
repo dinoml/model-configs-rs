@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.server
+import hashlib
 import io
 import json
 import stat
@@ -64,6 +65,17 @@ class SupportedKindTests(unittest.TestCase):
         self.assertIsNone(corpus_inventory.supported_kind(".cache/config.json"))
         self.assertIsNone(corpus_inventory.supported_kind("tokenizer.json"))
         self.assertIsNone(corpus_inventory.supported_kind("pytorch_model.bin.index.json"))
+
+    def test_allows_hidden_component_directories_but_excludes_metadata(self) -> None:
+        self.assertEqual(
+            corpus_inventory.supported_kind(".hidden/config.json"),
+            "config.json",
+        )
+        for directory in [".cache", ".git", ".hg", ".svn"]:
+            with self.subTest(directory=directory):
+                self.assertIsNone(
+                    corpus_inventory.supported_kind(f"{directory}/config.json")
+                )
 
     def test_rejects_noncanonical_path_spellings_before_normalization(self) -> None:
         for path in [
@@ -197,6 +209,53 @@ class AuditTests(unittest.TestCase):
             [{"path": "owner/repo/config.json", "keys": ["model_type"], "occurrences": 1}],
         )
 
+    def test_verifies_revision_file_hashes_and_reports_unpinned_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            corpus_root = root / "corpus"
+            repository = corpus_root / "owner" / "repo"
+            repository.mkdir(parents=True)
+            config = b'{"model_type":"test"}\n'
+            tokenizer = b'{"tokenizer_class":"Test"}\n'
+            (repository / "config.json").write_bytes(config)
+            (repository / "tokenizer_config.json").write_bytes(tokenizer)
+            fetch_manifest = root / "fetch.json"
+            fetch_manifest.write_text(
+                json.dumps(
+                    {
+                        "repositories": [
+                            {
+                                "id": "OWNER/REPO",
+                                "revision": "abc",
+                                "documents": [
+                                    {
+                                        "path": "config.json",
+                                        "sha256": hashlib.sha256(config).hexdigest(),
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            audit = corpus_inventory.audit_corpus(
+                corpus_root, revision_manifest_path=fetch_manifest
+            )
+
+        self.assertEqual(
+            audit["provenance"],
+            {
+                "revision_verified_files": 1,
+                "files_without_revision_record": 1,
+                "revision_mismatch_files": 0,
+                "revision_mismatches": [],
+                "expected_revision_files_missing": 0,
+                "missing_revision_documents": [],
+            },
+        )
+
     def test_rejects_symlinked_repository_instead_of_traversing_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary_root = Path(temporary_directory)
@@ -261,6 +320,22 @@ class AuditTests(unittest.TestCase):
             ):
                 corpus_inventory.audit_corpus(corpus_root)
 
+    def test_reports_excessive_json_nesting_as_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            corpus_root = Path(temporary_directory)
+            repository = corpus_root / "owner" / "repo"
+            repository.mkdir(parents=True)
+            (repository / "config.json").write_text(
+                "[" * 10_000 + "0" + "]" * 10_000,
+                encoding="utf-8",
+            )
+
+            audit = corpus_inventory.audit_corpus(corpus_root)
+
+        self.assertEqual(audit["corpus"]["invalid_json_files"], 1)
+        self.assertEqual(audit["invalid_json"][0]["path"], "owner/repo/config.json")
+        self.assertIn("recursion", audit["invalid_json"][0]["message"].casefold())
+
 
 class FetchSelectionTests(unittest.TestCase):
     def test_selects_supported_siblings_without_cache_paths(self) -> None:
@@ -276,6 +351,31 @@ class FetchSelectionTests(unittest.TestCase):
             corpus_inventory.select_supported_files(siblings),
             ["config.json", "model.safetensors.index.json", "unet/config.json"],
         )
+
+    def test_rejects_nonportable_sibling_path_collisions(self) -> None:
+        inventories = [
+            [
+                {"rfilename": "A/config.json"},
+                {"rfilename": "a/config.json"},
+            ],
+            [
+                {"rfilename": "A/config.json"},
+                {"rfilename": "a/tokenizer_config.json"},
+            ],
+            [
+                {"rfilename": "caf\u00e9/config.json"},
+                {"rfilename": "cafe\u0301/tokenizer_config.json"},
+            ],
+            [
+                {"rfilename": "A/config.json"},
+                {"rfilename": "a/config.json/config.json"},
+            ],
+        ]
+        for siblings in inventories:
+            with self.subTest(siblings=siblings), self.assertRaises(
+                corpus_inventory.NonPortableRepositoryInventory
+            ):
+                corpus_inventory.select_supported_files(siblings)
 
     def test_repository_manifest_rejects_parent_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -356,6 +456,94 @@ class FetchSelectionTests(unittest.TestCase):
                 {"id": "other/repo", "status": "kept"},
             ],
         )
+
+    def test_load_resume_and_resolution_use_casefold_repository_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manifest = Path(temporary_directory) / "repositories.json"
+            manifest.write_text(
+                '["Dynamic/YARN", "dynamic/yarn", "other/repo"]\n',
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                corpus_inventory._load_repository_ids(manifest),
+                ["Dynamic/YARN", "other/repo"],
+            )
+
+        previous = {
+            "repositories": [
+                {"id": "DYNAMIC/yarn", "status": "ok"},
+                {"id": "OTHER/repo", "status": "http_429"},
+            ]
+        }
+        self.assertEqual(
+            corpus_inventory._pending_repository_ids(
+                ["dynamic/YARN", "other/REPO"], previous
+            ),
+            ["other/REPO"],
+        )
+
+        candidates = {
+            "repositories": [{"id": "dynamic/YARN", "evidence": []}],
+        }
+        fetched = {
+            "repositories": [
+                {
+                    "id": "DYNAMIC/yarn",
+                    "status": "ok",
+                    "revision": "abc",
+                    "files": [],
+                }
+            ]
+        }
+        resolved, unresolved = corpus_inventory.resolve_report_candidates(
+            candidates, fetched
+        )
+        self.assertEqual(resolved["repository_count"], 1)
+        self.assertEqual(unresolved["candidate_count"], 0)
+
+        duplicate_candidates = {
+            "repositories": [
+                {
+                    "id": "DYNAMIC/yarn",
+                    "evidence": [{"report": "a/report.md", "line": 1}],
+                },
+                {
+                    "id": "dynamic/YARN",
+                    "evidence": [{"report": "b/report.md", "line": 2}],
+                },
+            ]
+        }
+        resolved, _ = corpus_inventory.resolve_report_candidates(
+            duplicate_candidates, fetched
+        )
+        self.assertEqual(resolved["repository_count"], 1)
+        self.assertEqual(
+            resolved["repositories"][0]["candidate_ids"],
+            ["DYNAMIC/yarn", "dynamic/YARN"],
+        )
+        self.assertEqual(len(resolved["repositories"][0]["evidence"]), 2)
+
+    def test_fetch_rejects_nonportable_inventory_before_downloads(self) -> None:
+        metadata = json.dumps(
+            {
+                "sha": "abc",
+                "siblings": [
+                    {"rfilename": "A/config.json"},
+                    {"rfilename": "a/tokenizer_config.json"},
+                ],
+            }
+        ).encode("utf-8")
+        with tempfile.TemporaryDirectory() as temporary_directory, mock.patch.object(
+            corpus_inventory,
+            "_http_bytes",
+            return_value=(metadata, {}),
+        ) as http_bytes:
+            result = corpus_inventory._fetch_repository(
+                "owner/repo", Path(temporary_directory), None
+            )
+
+        self.assertEqual(result["status"], "nonportable_inventory")
+        self.assertEqual(http_bytes.call_count, 1)
 
     def test_resume_does_not_retry_permanent_partial_download_failures(self) -> None:
         self.assertFalse(

@@ -11,6 +11,10 @@ This is a deterministic summary. The third-party documents remain in the externa
 - Invalid JSON documents: 25
 - JSON documents with duplicate object keys: 5
 - Duplicate byte copies after the first occurrence: 11,157
+- Revision-and-hash verified documents: 7,089
+- Documents without a revision file record: 9,356
+- Revision hash mismatches: 0
+- Expected revision-backed documents missing: 0
 - Report-referenced repositories present: 1,620 / 1,718
 - Report-referenced repositories with supported documents: 1,620 / 1,718
 

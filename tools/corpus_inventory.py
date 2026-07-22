@@ -18,6 +18,7 @@ import stat
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -129,6 +130,7 @@ MAX_REPOSITORY_PATH_BYTES = 1024
 MAX_REPOSITORY_PATH_SEGMENT_BYTES = 255
 MAX_SOURCE_DOCUMENT_BYTES = 64 * 1024 * 1024
 WINDOWS_RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$"}
+EXCLUDED_METADATA_DIRECTORIES = frozenset({".cache", ".git", ".hg", ".svn"})
 
 
 class ResponseTooLarge(Exception):
@@ -143,6 +145,10 @@ class ResponseTooLarge(Exception):
 
 class UnsafeFilesystemPath(ValueError):
     """A corpus path could escape or alias the requested filesystem root."""
+
+
+class NonPortableRepositoryInventory(ValueError):
+    """A Hub file inventory cannot be represented on every supported host."""
 
 
 def _path_metadata(path: Path) -> os.stat_result | None:
@@ -262,7 +268,7 @@ def _normalized_relative_path(path: str) -> PurePosixPath | None:
     raw_parts = path.split("/")
     if any(
         part in {"", ".", ".."}
-        or part.startswith(".")
+        or part in EXCLUDED_METADATA_DIRECTORIES
         or not _portable_segment(part)
         for part in raw_parts
     ):
@@ -423,15 +429,60 @@ def _load_fetch_revisions(fetch_manifest_path: Path | None) -> dict[str, dict[st
     }
 
 
+def _portable_path_key(path: str) -> str:
+    return unicodedata.normalize(
+        "NFC", unicodedata.normalize("NFC", path).casefold()
+    )
+
+
+def _load_revision_documents(
+    revision_manifest_path: Path | None,
+) -> dict[tuple[str, str], dict[str, str]]:
+    if revision_manifest_path is None or not revision_manifest_path.is_file():
+        return {}
+    manifest = json.loads(revision_manifest_path.read_text(encoding="utf-8"))
+    documents: dict[tuple[str, str], dict[str, str]] = {}
+    for repository in manifest.get("repositories", []):
+        if not isinstance(repository, dict):
+            continue
+        repository_id = repository.get("id")
+        revision = repository.get("revision")
+        if not isinstance(repository_id, str) or not isinstance(revision, str):
+            continue
+        for document in repository.get("documents", []):
+            if not isinstance(document, dict):
+                continue
+            path = document.get("path")
+            digest = document.get("sha256")
+            if not isinstance(path, str) or not isinstance(digest, str):
+                continue
+            key = (repository_id.casefold(), _portable_path_key(path))
+            record = {
+                "repository": repository_id,
+                "path": path,
+                "revision": revision,
+                "sha256": digest,
+            }
+            previous = documents.get(key)
+            if previous is not None and previous != record:
+                raise ValueError(
+                    "revision manifest contains a duplicate portable document identity: "
+                    f"{repository_id}/{path}"
+                )
+            documents[key] = record
+    return documents
+
+
 def audit_corpus(
     corpus_root: Path,
     report_repository_ids: Sequence[str] = (),
     fetch_manifest_path: Path | None = None,
     duplicate_sample_limit: int = 5,
+    revision_manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     """Audit supported documents below two-segment owner/repository roots."""
     resolved_corpus_root = _prepare_corpus_root(corpus_root, create=False)
-    repository_ids = sorted(set(report_repository_ids), key=lambda value: (value.casefold(), value))
+    repository_ids = _casefold_unique(report_repository_ids)
     requested_by_casefold = {repository_id.casefold(): repository_id for repository_id in repository_ids}
     coverage: dict[str, dict[str, Any]] = {
         repository_id.casefold(): {
@@ -443,6 +494,8 @@ def audit_corpus(
         for repository_id in repository_ids
     }
     revisions = _load_fetch_revisions(fetch_manifest_path)
+    revision_documents = _load_revision_documents(revision_manifest_path)
+    seen_revision_documents: set[tuple[str, str]] = set()
 
     kind_counts: dict[str, int] = defaultdict(int)
     kind_hashes: dict[str, set[str]] = defaultdict(set)
@@ -457,6 +510,9 @@ def audit_corpus(
     supported_bytes = 0
     json_files = 0
     valid_json_files = 0
+    revision_verified_files = 0
+    files_without_revision_record = 0
+    revision_mismatches: list[dict[str, str]] = []
 
     owner_directories: list[Path] = []
     for path in sorted(corpus_root.iterdir(), key=lambda entry: (entry.name.casefold(), entry.name)):
@@ -502,7 +558,7 @@ def audit_corpus(
                 )
                 safe_directory_names: list[str] = []
                 for directory_name in sorted(directory_names):
-                    if directory_name.startswith("."):
+                    if directory_name in EXCLUDED_METADATA_DIRECTORIES:
                         continue
                     directory_path = current_path / directory_name
                     logical_path = directory_path.relative_to(corpus_root).as_posix()
@@ -542,6 +598,25 @@ def audit_corpus(
                     repository_kind_counts[kind] += 1
                     kind_hashes[kind].add(digest)
                     digest_paths[(kind, digest)].append(relative_to_corpus)
+                    revision_key = (
+                        actual_casefold,
+                        _portable_path_key(relative_to_repository),
+                    )
+                    revision_document = revision_documents.get(revision_key)
+                    if revision_document is None:
+                        files_without_revision_record += 1
+                    elif revision_document["sha256"] == digest:
+                        seen_revision_documents.add(revision_key)
+                        revision_verified_files += 1
+                    else:
+                        seen_revision_documents.add(revision_key)
+                        revision_mismatches.append(
+                            {
+                                "path": relative_to_corpus,
+                                "expected_sha256": revision_document["sha256"],
+                                "actual_sha256": digest,
+                            }
+                        )
 
                     if kind in JSON_KINDS:
                         json_files += 1
@@ -559,7 +634,12 @@ def audit_corpus(
                                         "occurrences": len(duplicate_keys),
                                     }
                                 )
-                        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+                        except (
+                            UnicodeDecodeError,
+                            json.JSONDecodeError,
+                            RecursionError,
+                            ValueError,
+                        ) as error:
                             invalid_json.append({"path": relative_to_corpus, **_json_error(error)})
 
             if repository_supported_files:
@@ -603,6 +683,12 @@ def audit_corpus(
 
     invalid_json.sort(key=lambda entry: (entry["path"].casefold(), entry["path"]))
     duplicate_json_keys.sort(key=lambda entry: (entry["path"].casefold(), entry["path"]))
+    revision_mismatches.sort(key=lambda entry: (entry["path"].casefold(), entry["path"]))
+    missing_revision_documents = [
+        revision_documents[key]
+        for key in sorted(revision_documents)
+        if key not in seen_revision_documents
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "corpus": {
@@ -623,6 +709,14 @@ def audit_corpus(
             "duplicate_files": duplicate_files,
             "groups": duplicate_groups,
         },
+        "provenance": {
+            "revision_verified_files": revision_verified_files,
+            "files_without_revision_record": files_without_revision_record,
+            "revision_mismatch_files": len(revision_mismatches),
+            "revision_mismatches": revision_mismatches,
+            "expected_revision_files_missing": len(missing_revision_documents),
+            "missing_revision_documents": missing_revision_documents,
+        },
         "json_top_level_types": {
             kind: dict(sorted(type_counts.items()))
             for kind, type_counts in sorted(json_top_level_types.items())
@@ -641,7 +735,23 @@ def select_supported_files(siblings: Iterable[dict[str, Any]]) -> list[str]:
         path = sibling.get("rfilename")
         if isinstance(path, str) and supported_kind(path) is not None:
             selected.add(_normalized_relative_path(path).as_posix())  # type: ignore[union-attr]
-    return sorted(selected, key=lambda value: (value.casefold(), value))
+    ordered = sorted(selected, key=lambda value: (value.casefold(), value))
+    materialized: dict[str, tuple[str, str]] = {}
+    for path in ordered:
+        parts = path.split("/")
+        for index in range(1, len(parts) + 1):
+            spelling = "/".join(parts[:index])
+            entry_kind = "file" if index == len(parts) else "directory"
+            portable_key = _portable_path_key(spelling)
+            previous = materialized.get(portable_key)
+            current = (spelling, entry_kind)
+            if previous is not None and previous != current:
+                raise NonPortableRepositoryInventory(
+                    "repository inventory has a portable path collision: "
+                    f"{previous[0]!r} ({previous[1]}) and {spelling!r} ({entry_kind})"
+                )
+            materialized[portable_key] = current
+    return ordered
 
 
 def _url_origin(url: str) -> tuple[str, str | None, int | None]:
@@ -813,6 +923,8 @@ def _fetch_repository(repository_id: str, corpus_root: Path, token: str | None) 
         return {"id": repository_id, "status": "too_large"}
     except UnsafeFilesystemPath:
         return {"id": repository_id, "status": "unsafe_filesystem_path"}
+    except NonPortableRepositoryInventory as error:
+        return {"id": repository_id, "status": "nonportable_inventory", "error": str(error)}
     except urllib.error.HTTPError as error:
         status = {401: "unauthorized", 403: "forbidden", 404: "not_found"}.get(error.code, f"http_{error.code}")
         return {"id": repository_id, "status": status}
@@ -885,22 +997,62 @@ def _entries_by_casefold(entries: Any) -> dict[str, dict[str, Any]]:
     return selected
 
 
+def _candidate_entries_by_casefold(entries: Any) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for entry in sorted(
+        (
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        ),
+        key=lambda item: (item["id"].casefold(), item["id"]),
+    ):
+        repository_id = entry["id"]
+        grouped_entry = grouped.setdefault(
+            repository_id.casefold(),
+            {"id": repository_id, "candidate_ids": [], "evidence": []},
+        )
+        if repository_id not in grouped_entry["candidate_ids"]:
+            grouped_entry["candidate_ids"].append(repository_id)
+        grouped_entry["evidence"].extend(
+            evidence
+            for evidence in entry.get("evidence", [])
+            if isinstance(evidence, dict)
+        )
+
+    merged: list[dict[str, Any]] = []
+    for grouped_entry in grouped.values():
+        evidence_by_encoding = {
+            json.dumps(evidence, ensure_ascii=False, sort_keys=True): evidence
+            for evidence in grouped_entry["evidence"]
+        }
+        grouped_entry["evidence"] = sorted(
+            evidence_by_encoding.values(),
+            key=lambda evidence: (
+                str(evidence.get("report", "")),
+                evidence.get("line", 0)
+                if isinstance(evidence.get("line", 0), int)
+                else 0,
+                str(evidence.get("kind", "")),
+                json.dumps(evidence, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        if len(grouped_entry["candidate_ids"]) == 1:
+            del grouped_entry["candidate_ids"]
+        merged.append(grouped_entry)
+    return merged
+
+
 def resolve_report_candidates(
     candidates: dict[str, Any], fetch_manifest: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Split extracted candidates by whether Hub returned a concrete revision."""
-    fetched_by_id = {
-        entry["id"]: entry
-        for entry in fetch_manifest.get("repositories", [])
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
-    }
+    fetched_by_id = _entries_by_casefold(fetch_manifest.get("repositories", []))
     resolved_entries: list[dict[str, Any]] = []
     unresolved_entries: list[dict[str, Any]] = []
-    for candidate in candidates.get("repositories", []):
-        if not isinstance(candidate, dict) or not isinstance(candidate.get("id"), str):
-            continue
+    for candidate in _candidate_entries_by_casefold(candidates.get("repositories", [])):
         repository_id = candidate["id"]
-        fetched = fetched_by_id.get(repository_id, {})
+        fetched = fetched_by_id.get(repository_id.casefold(), {})
         revision = fetched.get("revision")
         if isinstance(revision, str):
             documents: list[dict[str, Any]] = []
@@ -915,23 +1067,25 @@ def resolve_report_candidates(
                     document["status"] = file_entry.get("status", "unavailable")
                 documents.append(document)
             documents.sort(key=lambda entry: (entry["path"].casefold(), entry["path"]))
-            resolved_entries.append(
-                {
+            resolved_entry = {
                     "id": repository_id,
                     "revision": revision,
                     "fetch_status": fetched.get("status", "unknown"),
                     "evidence": candidate.get("evidence", []),
                     "documents": documents,
                 }
-            )
+            if "candidate_ids" in candidate:
+                resolved_entry["candidate_ids"] = candidate["candidate_ids"]
+            resolved_entries.append(resolved_entry)
         else:
-            unresolved_entries.append(
-                {
+            unresolved_entry = {
                     "id": repository_id,
                     "fetch_status": fetched.get("status", "not_attempted"),
                     "evidence": candidate.get("evidence", []),
                 }
-            )
+            if "candidate_ids" in candidate:
+                unresolved_entry["candidate_ids"] = candidate["candidate_ids"]
+            unresolved_entries.append(unresolved_entry)
     resolved_entries.sort(key=lambda entry: (entry["id"].casefold(), entry["id"]))
     unresolved_entries.sort(key=lambda entry: (entry["id"].casefold(), entry["id"]))
     return (
@@ -939,12 +1093,14 @@ def resolve_report_candidates(
             "schema_version": SCHEMA_VERSION,
             "report_count": candidates.get("report_count", 0),
             "repository_count": len(resolved_entries),
+            "report_sources": candidates.get("report_sources", []),
             "repositories": resolved_entries,
         },
         {
             "schema_version": SCHEMA_VERSION,
             "report_count": candidates.get("report_count", 0),
             "candidate_count": len(unresolved_entries),
+            "report_sources": candidates.get("report_sources", []),
             "candidates": unresolved_entries,
         },
     )
@@ -963,6 +1119,18 @@ def _retryable_fetch_entry(entry: dict[str, Any]) -> bool:
         isinstance(file_entry, dict) and _retryable_fetch_status(file_entry.get("status"))
         for file_entry in entry.get("files", [])
     )
+
+
+def _pending_repository_ids(
+    repository_ids: Sequence[str], previous_manifest: dict[str, Any]
+) -> list[str]:
+    previous_by_id = _entries_by_casefold(previous_manifest.get("repositories", []))
+    pending: list[str] = []
+    for repository_id in _casefold_unique(repository_ids):
+        previous = previous_by_id.get(repository_id.casefold())
+        if previous is None or _retryable_fetch_entry(previous):
+            pending.append(repository_id)
+    return pending
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -999,7 +1167,7 @@ def _load_repository_ids(path: Path) -> list[str]:
         if _clean_repository_id(owner, repository) != repository_id:
             raise ValueError(f"invalid repository manifest entry: {entry!r}")
         repository_ids.append(repository_id)
-    return sorted(set(repository_ids), key=lambda value: (value.casefold(), value))
+    return _casefold_unique(repository_ids)
 
 
 def render_markdown(audit: dict[str, Any]) -> str:
@@ -1021,6 +1189,10 @@ def render_markdown(audit: dict[str, Any]) -> str:
         f"- Invalid JSON documents: {corpus['invalid_json_files']:,}",
         f"- JSON documents with duplicate object keys: {corpus['json_files_with_duplicate_keys']:,}",
         f"- Duplicate byte copies after the first occurrence: {audit['duplicates']['duplicate_files']:,}",
+        f"- Revision-and-hash verified documents: {audit['provenance']['revision_verified_files']:,}",
+        f"- Documents without a revision file record: {audit['provenance']['files_without_revision_record']:,}",
+        f"- Revision hash mismatches: {audit['provenance']['revision_mismatch_files']:,}",
+        f"- Expected revision-backed documents missing: {audit['provenance']['expected_revision_files_missing']:,}",
         f"- Report-referenced repositories present: {present:,} / {len(coverage):,}",
         f"- Report-referenced repositories with supported documents: {with_documents:,} / {len(coverage):,}",
         "",
@@ -1087,12 +1259,33 @@ def _parse_report_root(value: str) -> tuple[str, Path]:
     return label, path
 
 
+def _parse_source_revision(value: str) -> dict[str, str]:
+    repository, separator, revision = value.rpartition("@")
+    if (
+        not separator
+        or not repository.startswith("https://github.com/")
+        or not re.fullmatch(r"[0-9a-f]{40}", revision)
+    ):
+        raise argparse.ArgumentTypeError(
+            "source revisions must use https://github.com/OWNER/REPOSITORY@40_HEX_COMMIT"
+        )
+    return {"repository": repository.removesuffix(".git"), "revision": revision}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract_parser = subparsers.add_parser("extract", help="extract Hub repository IDs from report.md files")
     extract_parser.add_argument("--reports", action="append", required=True, type=_parse_report_root, metavar="LABEL=PATH")
+    extract_parser.add_argument(
+        "--source-revision",
+        action="append",
+        required=True,
+        type=_parse_source_revision,
+        metavar="GITHUB_URL@COMMIT",
+        help="record the immutable source revision containing the report trees",
+    )
     extract_parser.add_argument("--output", required=True, type=Path)
 
     fetch_parser = subparsers.add_parser("fetch", help="fetch supported documents at resolved Hub revisions")
@@ -1140,6 +1333,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "schema_version": SCHEMA_VERSION,
             "report_count": report_count,
             "repository_count": len(repositories),
+            "report_sources": sorted(
+                arguments.source_revision,
+                key=lambda entry: (entry["repository"].casefold(), entry["revision"]),
+            ),
             "repositories": repositories,
         }
         write_json(arguments.output, manifest)
@@ -1155,17 +1352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         previous_manifest: dict[str, Any] | None = None
         if arguments.resume and arguments.metadata.is_file():
             previous_manifest = json.loads(arguments.metadata.read_text(encoding="utf-8"))
-            previous_by_id = {
-                entry["id"]: entry
-                for entry in previous_manifest.get("repositories", [])
-                if isinstance(entry, dict) and isinstance(entry.get("id"), str)
-            }
-            repository_ids = [
-                repository_id
-                for repository_id in repository_ids
-                if repository_id not in previous_by_id
-                or _retryable_fetch_entry(previous_by_id[repository_id])
-            ]
+            repository_ids = _pending_repository_ids(repository_ids, previous_manifest)
         if arguments.limit is not None:
             repository_ids = repository_ids[: arguments.limit]
         fetched_manifest = fetch_repositories(
@@ -1188,7 +1375,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.command == "audit":
         repository_ids = _load_repository_ids(arguments.repositories) if arguments.repositories else []
-        audit = audit_corpus(arguments.corpus, repository_ids, arguments.fetch_manifest)
+        audit = audit_corpus(
+            arguments.corpus,
+            repository_ids,
+            arguments.fetch_manifest,
+            revision_manifest_path=arguments.repositories,
+        )
         write_json(arguments.output, audit)
         if arguments.markdown:
             _atomic_write(arguments.markdown, render_markdown(audit).encode("utf-8"))

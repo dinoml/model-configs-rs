@@ -1,7 +1,13 @@
 {
   "schema_version": 1,
   "report_count": 521,
-  "candidate_count": 723,
+  "candidate_count": 694,
+  "report_sources": [
+    {
+      "repository": "https://github.com/hlky/dinoml_v2_agents",
+      "revision": "27580a452b8890fe0c72a5546c75ee7844c9aaa2"
+    }
+  ],
   "candidates": [
     {
       "id": "0.125/0.5",
@@ -1423,6 +1429,11 @@
         },
         {
           "report": "transformers/prophetnet/report.md",
+          "line": 81,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/prophetnet/report.md",
           "line": 288,
           "kind": "contextual_id"
         },
@@ -1431,17 +1442,10 @@
           "line": 79,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "bos/eos",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/prophetnet/report.md",
-          "line": 81,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "BOS/EOS",
+        "bos/eos"
       ]
     },
     {
@@ -1575,97 +1579,6 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "diffusers/ledits_pp/report.md",
-          "line": 135,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/audioflamingo3/report.md",
-          "line": 97,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/aya_vision/report.md",
-          "line": 84,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/blt/report.md",
-          "line": 84,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/cohere/report.md",
-          "line": 77,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/cohere2_vision/report.md",
-          "line": 100,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/fuyu/report.md",
-          "line": 103,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/glmasr/report.md",
-          "line": 79,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/gpt_neo/report.md",
-          "line": 54,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/janus/report.md",
-          "line": 99,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/mllama/report.md",
-          "line": 90,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/sam3_tracker/report.md",
-          "line": 72,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/sam3_tracker/report.md",
-          "line": 74,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/sam3_tracker_video/report.md",
-          "line": 75,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/shieldgemma2/report.md",
-          "line": 106,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/vibevoice_acoustic_tokenizer/report.md",
-          "line": 74,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/video_llava/report.md",
-          "line": 102,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "checkpoint/config",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "diffusers/bria_bria_fibo/report.md",
           "line": 120,
           "kind": "contextual_id"
@@ -1673,6 +1586,11 @@
         {
           "report": "diffusers/consisid/report.md",
           "line": 54,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "diffusers/ledits_pp/report.md",
+          "line": 135,
           "kind": "contextual_id"
         },
         {
@@ -1691,6 +1609,16 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/audioflamingo3/report.md",
+          "line": 97,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/aya_vision/report.md",
+          "line": 84,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/bit/report.md",
           "line": 62,
           "kind": "contextual_id"
@@ -1698,6 +1626,21 @@
         {
           "report": "transformers/blenderbot_small/report.md",
           "line": 69,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/blt/report.md",
+          "line": 84,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/cohere/report.md",
+          "line": 77,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/cohere2_vision/report.md",
+          "line": 100,
           "kind": "contextual_id"
         },
         {
@@ -1736,6 +1679,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/fuyu/report.md",
+          "line": 103,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/gemma/report.md",
           "line": 106,
           "kind": "contextual_id"
@@ -1743,6 +1691,11 @@
         {
           "report": "transformers/gemma2/report.md",
           "line": 67,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/glmasr/report.md",
+          "line": 79,
           "kind": "contextual_id"
         },
         {
@@ -1756,12 +1709,22 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/gpt_neo/report.md",
+          "line": 54,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/gpt_neox_japanese/report.md",
           "line": 106,
           "kind": "contextual_id"
         },
         {
           "report": "transformers/higgs_audio_v2/report.md",
+          "line": 99,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/janus/report.md",
           "line": 99,
           "kind": "contextual_id"
         },
@@ -1783,6 +1746,11 @@
         {
           "report": "transformers/ministral/report.md",
           "line": 88,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/mllama/report.md",
+          "line": 90,
           "kind": "contextual_id"
         },
         {
@@ -1821,8 +1789,28 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/sam3_tracker/report.md",
+          "line": 72,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/sam3_tracker/report.md",
+          "line": 74,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/sam3_tracker_video/report.md",
+          "line": 75,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/seggpt/report.md",
           "line": 29,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/shieldgemma2/report.md",
+          "line": 106,
           "kind": "contextual_id"
         },
         {
@@ -1846,6 +1834,16 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/vibevoice_acoustic_tokenizer/report.md",
+          "line": 74,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/video_llava/report.md",
+          "line": 102,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/vitdet/report.md",
           "line": 86,
           "kind": "contextual_id"
@@ -1855,6 +1853,10 @@
           "line": 73,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Checkpoint/config",
+        "checkpoint/config"
       ]
     },
     {
@@ -1922,17 +1924,6 @@
           "kind": "contextual_id"
         },
         {
-          "report": "transformers/seamless_m4t/report.md",
-          "line": 107,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "checkpoint/source",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "transformers/glm/report.md",
           "line": 300,
           "kind": "contextual_id"
@@ -1946,7 +1937,16 @@
           "report": "transformers/rembert/report.md",
           "line": 82,
           "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/seamless_m4t/report.md",
+          "line": 107,
+          "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Checkpoint/source",
+        "checkpoint/source"
       ]
     },
     {
@@ -2763,6 +2763,21 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/bloom/report.md",
+          "line": 74,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/falcon/report.md",
+          "line": 91,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/gpt_bigcode/report.md",
+          "line": 89,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/gptj/report.md",
           "line": 76,
           "kind": "contextual_id"
@@ -2777,27 +2792,10 @@
           "line": 70,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "dtype/config",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/bloom/report.md",
-          "line": 74,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/falcon/report.md",
-          "line": 91,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/gpt_bigcode/report.md",
-          "line": 89,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Dtype/config",
+        "dtype/config"
       ]
     },
     {
@@ -2885,32 +2883,25 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "transformers/helium/report.md",
-          "line": 201,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "dynamic/YARN",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "transformers/cohere/report.md",
           "line": 424,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "dynamic/yarn",
-      "fetch_status": "unauthorized",
-      "evidence": [
+        },
         {
           "report": "transformers/cohere2/report.md",
           "line": 497,
           "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/helium/report.md",
+          "line": 201,
+          "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Dynamic/yarn",
+        "dynamic/YARN",
+        "dynamic/yarn"
       ]
     },
     {
@@ -2951,21 +2942,19 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/bitnet/report.md",
+          "line": 547,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/codegen/report.md",
           "line": 76,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "embedding/LM",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/bitnet/report.md",
-          "line": 547,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Embedding/LM",
+        "embedding/LM"
       ]
     },
     {
@@ -3041,6 +3030,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/bigbird_pegasus/report.md",
+          "line": 73,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/blenderbot/report.md",
           "line": 83,
           "kind": "contextual_id"
@@ -3053,6 +3047,11 @@
         {
           "report": "transformers/led/report.md",
           "line": 66,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/marian/report.md",
+          "line": 77,
           "kind": "contextual_id"
         },
         {
@@ -3069,27 +3068,6 @@
           "report": "transformers/prophetnet/report.md",
           "line": 85,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "enc/dec",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/bigbird_pegasus/report.md",
-          "line": 73,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/led/report.md",
-          "line": 66,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/marian/report.md",
-          "line": 77,
-          "kind": "contextual_id"
         },
         {
           "report": "transformers/seamless_m4t/report.md",
@@ -3101,6 +3079,10 @@
           "line": 74,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Enc/Dec",
+        "enc/dec"
       ]
     },
     {
@@ -3157,6 +3139,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/ernie4_5_moe/report.md",
+          "line": 82,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/jamba/report.md",
           "line": 94,
           "kind": "contextual_id"
@@ -3172,6 +3159,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/qwen3_5_moe/report.md",
+          "line": 75,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/qwen3_moe/report.md",
           "line": 112,
           "kind": "contextual_id"
@@ -3181,22 +3173,10 @@
           "line": 101,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "experts/top-k",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/ernie4_5_moe/report.md",
-          "line": 82,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/qwen3_5_moe/report.md",
-          "line": 75,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Experts/top-k",
+        "experts/top-k"
       ]
     },
     {
@@ -3793,24 +3773,13 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "transformers/dab_detr/report.md",
-          "line": 21,
+          "report": "transformers/csm/report.md",
+          "line": 68,
           "kind": "contextual_id"
         },
         {
-          "report": "transformers/imagegpt/report.md",
-          "line": 360,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "gated/401",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/csm/report.md",
-          "line": 68,
+          "report": "transformers/dab_detr/report.md",
+          "line": 21,
           "kind": "contextual_id"
         },
         {
@@ -3836,6 +3805,11 @@
         {
           "report": "transformers/groupvit/report.md",
           "line": 36,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/imagegpt/report.md",
+          "line": 360,
           "kind": "contextual_id"
         },
         {
@@ -3883,6 +3857,10 @@
           "line": 18,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Gated/401",
+        "gated/401"
       ]
     },
     {
@@ -3945,19 +3923,13 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "transformers/mbart/report.md",
-          "line": 95,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "generation/tokenizer",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "transformers/dia/report.md",
           "line": 8,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/mbart/report.md",
+          "line": 95,
           "kind": "contextual_id"
         },
         {
@@ -3965,6 +3937,10 @@
           "line": 8,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Generation/tokenizer",
+        "generation/tokenizer"
       ]
     },
     {
@@ -4322,18 +4298,16 @@
           "report": "transformers/blip/report.md",
           "line": 101,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "heads/ffn",
-      "fetch_status": "unauthorized",
-      "evidence": [
+        },
         {
           "report": "transformers/dpr/report.md",
           "line": 97,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "heads/FFN",
+        "heads/ffn"
       ]
     },
     {
@@ -4341,21 +4315,19 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/falcon_h1/report.md",
+          "line": 58,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/glpn/report.md",
           "line": 81,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "heads/head_dim",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/falcon_h1/report.md",
-          "line": 58,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Heads/head_dim",
+        "heads/head_dim"
       ]
     },
     {
@@ -4373,6 +4345,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/colqwen2/report.md",
+          "line": 70,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/dbrx/report.md",
           "line": 96,
           "kind": "contextual_id"
@@ -4380,6 +4357,11 @@
         {
           "report": "transformers/deepseek_v2/report.md",
           "line": 112,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/falcon_h1/report.md",
+          "line": 58,
           "kind": "contextual_id"
         },
         {
@@ -4398,6 +4380,21 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/granite_speech_plus/report.md",
+          "line": 93,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/idefics3/report.md",
+          "line": 124,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/mistral3/report.md",
+          "line": 78,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/phi/report.md",
           "line": 103,
           "kind": "contextual_id"
@@ -4405,6 +4402,11 @@
         {
           "report": "transformers/qwen2/report.md",
           "line": 92,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/qwen2_5_omni/report.md",
+          "line": 68,
           "kind": "contextual_id"
         },
         {
@@ -4431,48 +4433,16 @@
           "report": "transformers/smolvlm/report.md",
           "line": 56,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "heads/KV",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/colqwen2/report.md",
-          "line": 70,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/falcon_h1/report.md",
-          "line": 58,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/granite_speech_plus/report.md",
-          "line": 93,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/idefics3/report.md",
-          "line": 124,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/mistral3/report.md",
-          "line": 78,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/qwen2_5_omni/report.md",
-          "line": 68,
-          "kind": "contextual_id"
         },
         {
           "report": "transformers/zamba/report.md",
           "line": 87,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Heads/KV",
+        "heads/KV"
       ]
     },
     {
@@ -4600,16 +4570,20 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/granite_speech_plus/report.md",
+          "line": 93,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/ibert/report.md",
           "line": 54,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "Hidden/layers",
-      "fetch_status": "unauthorized",
-      "evidence": [
+        },
+        {
+          "report": "transformers/idefics3/report.md",
+          "line": 124,
+          "kind": "contextual_id"
+        },
         {
           "report": "transformers/lilt/report.md",
           "line": 58,
@@ -4618,37 +4592,6 @@
         {
           "report": "transformers/lxmert/report.md",
           "line": 85,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/unispeech/report.md",
-          "line": 97,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/unispeech_sat/report.md",
-          "line": 70,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/yoso/report.md",
-          "line": 24,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "hidden/layers",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/granite_speech_plus/report.md",
-          "line": 93,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/idefics3/report.md",
-          "line": 124,
           "kind": "contextual_id"
         },
         {
@@ -4667,10 +4610,30 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/unispeech/report.md",
+          "line": 97,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/unispeech_sat/report.md",
+          "line": 70,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/vision_text_dual_encoder/report.md",
           "line": 77,
           "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/yoso/report.md",
+          "line": 24,
+          "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Hidden/Layers",
+        "Hidden/layers",
+        "hidden/layers"
       ]
     },
     {
@@ -4820,19 +4783,13 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "transformers/blip/report.md",
-          "line": 101,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "Image/patch",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "transformers/aimv2/report.md",
           "line": 63,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/blip/report.md",
+          "line": 101,
           "kind": "contextual_id"
         },
         {
@@ -4861,6 +4818,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/rf_detr/report.md",
+          "line": 106,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/sam/report.md",
           "line": 92,
           "kind": "contextual_id"
@@ -4875,17 +4837,11 @@
           "line": 77,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "image/patch",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/rf_detr/report.md",
-          "line": 106,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Image/Patch",
+        "Image/patch",
+        "image/patch"
       ]
     },
     {
@@ -5781,43 +5737,17 @@
       "evidence": [
         {
           "report": "transformers/audio_spectrogram_transformer/report.md",
+          "line": 106,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/audio_spectrogram_transformer/report.md",
           "line": 273,
           "kind": "contextual_id"
         },
         {
           "report": "transformers/beit/report.md",
           "line": 81,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/mobilenet_v2/report.md",
-          "line": 231,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/owlv2/report.md",
-          "line": 104,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/timm_wrapper/report.md",
-          "line": 235,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/vision_encoder_decoder/report.md",
-          "line": 104,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "mean/std",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/audio_spectrogram_transformer/report.md",
-          "line": 106,
           "kind": "contextual_id"
         },
         {
@@ -5861,6 +5791,16 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/mobilenet_v2/report.md",
+          "line": 231,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/owlv2/report.md",
+          "line": 104,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/paddleocr_vl/report.md",
           "line": 150,
           "kind": "contextual_id"
@@ -5878,6 +5818,11 @@
         {
           "report": "transformers/seggpt/report.md",
           "line": 93,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/timm_wrapper/report.md",
+          "line": 235,
           "kind": "contextual_id"
         },
         {
@@ -5904,7 +5849,16 @@
           "report": "transformers/vilt/report.md",
           "line": 117,
           "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/vision_encoder_decoder/report.md",
+          "line": 104,
+          "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Mean/std",
+        "mean/std"
       ]
     },
     {
@@ -6581,6 +6535,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/nanochat/report.md",
+          "line": 250,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/nemotron/report.md",
           "line": 484,
           "kind": "contextual_id"
@@ -6595,17 +6554,10 @@
           "line": 627,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "non-default/dynamic",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/nanochat/report.md",
-          "line": 250,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Non-default/dynamic",
+        "non-default/dynamic"
       ]
     },
     {
@@ -7170,8 +7122,18 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/biogpt/report.md",
+          "line": 296,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/bitnet/report.md",
           "line": 225,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/codegen/report.md",
+          "line": 295,
           "kind": "contextual_id"
         },
         {
@@ -7195,6 +7157,21 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/gptj/report.md",
+          "line": 506,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/helium/report.md",
+          "line": 150,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/layoutlmv2/report.md",
+          "line": 296,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/layoutlmv2/report.md",
           "line": 374,
           "kind": "contextual_id"
@@ -7210,6 +7187,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/minimax_m2/report.md",
+          "line": 359,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/mobilebert/report.md",
           "line": 450,
           "kind": "contextual_id"
@@ -7217,6 +7199,11 @@
         {
           "report": "transformers/modernbert_decoder/report.md",
           "line": 269,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/olmo/report.md",
+          "line": 97,
           "kind": "contextual_id"
         },
         {
@@ -7249,53 +7236,21 @@
           "line": 306,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "q/k",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/biogpt/report.md",
-          "line": 296,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/codegen/report.md",
-          "line": 295,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/gptj/report.md",
-          "line": 506,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/helium/report.md",
-          "line": 150,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/layoutlmv2/report.md",
-          "line": 296,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/minimax_m2/report.md",
-          "line": 359,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/olmo/report.md",
-          "line": 97,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Q/K",
+        "q/k"
       ]
     },
     {
       "id": "Q/KV",
       "fetch_status": "unauthorized",
       "evidence": [
+        {
+          "report": "transformers/ernie4_5_moe/report.md",
+          "line": 82,
+          "kind": "contextual_id"
+        },
         {
           "report": "transformers/lfm2_moe/report.md",
           "line": 120,
@@ -7306,17 +7261,10 @@
           "line": 69,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "q/kv",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/ernie4_5_moe/report.md",
-          "line": 82,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Q/KV",
+        "q/kv"
       ]
     },
     {
@@ -7338,13 +7286,7 @@
           "report": "transformers/longcat_flash/report.md",
           "line": 72,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "qk/v",
-      "fetch_status": "unauthorized",
-      "evidence": [
+        },
         {
           "report": "transformers/perceiver/report.md",
           "line": 45,
@@ -7355,6 +7297,10 @@
           "line": 72,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "QK/V",
+        "qk/v"
       ]
     },
     {
@@ -7444,6 +7390,11 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/eomt/report.md",
+          "line": 322,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/helium/report.md",
           "line": 351,
           "kind": "contextual_id"
@@ -7456,6 +7407,11 @@
         {
           "report": "transformers/mpnet/report.md",
           "line": 557,
+          "kind": "contextual_id"
+        },
+        {
+          "report": "transformers/nanochat/report.md",
+          "line": 250,
           "kind": "contextual_id"
         },
         {
@@ -7488,22 +7444,10 @@
           "line": 545,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "quantized/packed",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/eomt/report.md",
-          "line": 322,
-          "kind": "contextual_id"
-        },
-        {
-          "report": "transformers/nanochat/report.md",
-          "line": 250,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Quantized/packed",
+        "quantized/packed"
       ]
     },
     {
@@ -8115,21 +8059,19 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "diffusers/longcat_image/report.md",
+          "line": 591,
+          "kind": "contextual_id"
+        },
+        {
           "report": "diffusers/nucleusmoe_image/report.md",
           "line": 527,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "single-file/original",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "diffusers/longcat_image/report.md",
-          "line": 591,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Single-file/original",
+        "single-file/original"
       ]
     },
     {
@@ -8641,6 +8583,11 @@
           "kind": "contextual_id"
         },
         {
+          "report": "transformers/megatron_bert/report.md",
+          "line": 74,
+          "kind": "contextual_id"
+        },
+        {
           "report": "transformers/mobilenet_v2/report.md",
           "line": 72,
           "kind": "contextual_id"
@@ -8650,17 +8597,10 @@
           "line": 71,
           "kind": "contextual_id"
         }
-      ]
-    },
-    {
-      "id": "task/head",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/megatron_bert/report.md",
-          "line": 74,
-          "kind": "contextual_id"
-        }
+      ],
+      "candidate_ids": [
+        "Task/head",
+        "task/head"
       ]
     },
     {
@@ -8833,21 +8773,19 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
+          "report": "transformers/bert_generation/report.md",
+          "line": 7,
+          "kind": "model_id"
+        },
+        {
           "report": "transformers/groupvit/report.md",
           "line": 7,
           "kind": "model_id"
         }
-      ]
-    },
-    {
-      "id": "tiny/community",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
-          "report": "transformers/bert_generation/report.md",
-          "line": 7,
-          "kind": "model_id"
-        }
+      ],
+      "candidate_ids": [
+        "Tiny/community",
+        "tiny/community"
       ]
     },
     {
@@ -8855,20 +8793,14 @@
       "fetch_status": "unauthorized",
       "evidence": [
         {
-          "report": "diffusers/ltx2/report.md",
-          "line": 21,
-          "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "tiny/debug",
-      "fetch_status": "unauthorized",
-      "evidence": [
-        {
           "report": "diffusers/helios/report.md",
           "line": 15,
           "kind": "model_id_continuation"
+        },
+        {
+          "report": "diffusers/ltx2/report.md",
+          "line": 21,
+          "kind": "contextual_id"
         },
         {
           "report": "transformers/dia/report.md",
@@ -8895,6 +8827,10 @@
           "line": 39,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Tiny/debug",
+        "tiny/debug"
       ]
     },
     {
@@ -9422,18 +9358,16 @@
           "report": "transformers/gemma4/report.md",
           "line": 135,
           "kind": "contextual_id"
-        }
-      ]
-    },
-    {
-      "id": "vision/audio",
-      "fetch_status": "unauthorized",
-      "evidence": [
+        },
         {
           "report": "transformers/gemma4_assistant/report.md",
           "line": 77,
           "kind": "contextual_id"
         }
+      ],
+      "candidate_ids": [
+        "Vision/audio",
+        "vision/audio"
       ]
     },
     {

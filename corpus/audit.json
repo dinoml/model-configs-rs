@@ -17321,6 +17321,14 @@
       }
     ]
   },
+  "provenance": {
+    "revision_verified_files": 7089,
+    "files_without_revision_record": 9356,
+    "revision_mismatch_files": 0,
+    "revision_mismatches": [],
+    "expected_revision_files_missing": 0,
+    "missing_revision_documents": []
+  },
   "json_top_level_types": {
     "*.safetensors.index.json": {
       "object": 526

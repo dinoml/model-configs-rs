@@ -1,11 +1,20 @@
 # Configuration corpus
 
-The corpus itself is external. This directory contains only reproducible inventory metadata and the tooling contract used to build it; no third-party model configuration is committed.
+The corpus itself is external. This directory contains revision-backed report
+inventory metadata, a deterministic audit of one local snapshot, and the
+tooling contract used to build it; no third-party model configuration is
+committed. The full local snapshot is not independently reproducible because
+some pre-existing repositories have no recorded revision.
 
 The current audit uses two inputs:
 
 - Diffusers reports under `agents/plans/diffusers/**/report.md`.
 - Transformers reports under `agents/plans/transformers/**/report.md`.
+
+Both report trees were read from
+[`hlky/dinoml_v2_agents`](https://github.com/hlky/dinoml_v2_agents) commit
+`27580a452b8890fe0c72a5546c75ee7844c9aaa2`. The upstream Transformers and
+Diffusers audit baseline commits are recorded separately in RFC 0001.
 
 `report-candidates.json` is the deterministic, line-attributed extraction result. It intentionally includes low-confidence path-shaped text so extraction mistakes are auditable. `report-repositories.json` contains only candidates for which the Hugging Face API returned a concrete commit revision. `unresolved-report-candidates.json` retains the rest with their fetch status. A `401` cannot prove that a repository exists because the Hub uses that response for both inaccessible and invalid identifiers.
 
@@ -29,12 +38,14 @@ The audit recognizes these basenames at the repository root or any safe nested c
 - `*.safetensors.index.json`
 
 Paths must be relative UTF-8 slash-separated repository paths. Empty, `.`,
-`..`, dot-prefixed, backslash-containing, control-character, Windows-reserved,
+`..`, backslash-containing, control-character, Windows-reserved,
 drive/prefix-like, trailing-dot/space, oversized segment, and oversized total
-path spellings are excluded before host-path conversion. This omits Hugging
-Face `.cache` sidecars and prevents metadata from being mistaken for source
-configuration. Root files outside an `owner/repository` directory are also
-excluded.
+path spellings are excluded before host-path conversion. The explicit `.git`,
+`.hg`, `.svn`, and `.cache` metadata directories are excluded; other safe
+dot-prefixed component directories remain valid. Case-folded or Unicode-NFC
+path collisions—including collisions between parent directories—make a Hub
+inventory permanently `nonportable_inventory` before any file is downloaded.
+Root files outside an `owner/repository` directory are also excluded.
 
 Corpus owner, repository, component, and file entries must be ordinary
 directories or regular files. The audit fails on a symbolic link or Windows
@@ -57,6 +68,7 @@ From the repository root, extract report evidence:
 python tools/corpus_inventory.py extract `
   --reports diffusers=H:\dinoml_v2_agents\agents\plans\diffusers `
   --reports transformers=H:\dinoml_v2_agents\agents\plans\transformers `
+  --source-revision https://github.com/hlky/dinoml_v2_agents@27580a452b8890fe0c72a5546c75ee7844c9aaa2 `
   --output corpus\report-candidates.json
 ```
 
@@ -72,7 +84,8 @@ python tools/corpus_inventory.py fetch `
 
 Repeat that command until no `http_429`, transient per-file `partial`, or
 network statuses remain. A partial containing only `401`, `too_large`, or
-`unsafe_filesystem_path` file results is permanent and is not retried. HTTP
+`unsafe_filesystem_path` file results is permanent and is not retried; a
+repository-level `nonportable_inventory` is also permanent. HTTP
 response bodies are read only through the v0.1 64 MiB source-document limit;
 one additional byte is inspected to produce the `too_large` outcome. The
 manifest is revision-pinned and written atomically after each batch. Set
@@ -100,6 +113,11 @@ python tools/corpus_inventory.py audit `
   --output corpus\audit.json `
   --markdown corpus\AUDIT.md
 ```
+
+The checked-in audit contains 7,089 documents verified against both a concrete
+Hub revision and an exact byte hash. The other 9,356 documents are part of the
+historical local snapshot but lack a matching revision file record, so the
+audit labels them explicitly rather than claiming they can be reconstructed.
 
 The hermetic behavior tests require no network or external corpus:
 

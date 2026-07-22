@@ -91,13 +91,15 @@ authoritative within their own scope.
 
 ## Corpus
 
-The reproducible [corpus audit](corpus/AUDIT.md) covers 16,445 supported
-documents from the external `H:\configs` corpus, including 1,718 repositories
-resolved from the DinoML Transformers and Diffusers reports to concrete Hub
-revisions. Bulk third-party files remain outside Git; this repository stores only
-revision-backed inventory metadata, audit results, tooling, and small attributed
-conformance fixtures. See [corpus/README.md](corpus/README.md) for reproduction
-commands and strict-JSON findings.
+The deterministic [corpus audit](corpus/AUDIT.md) covers 16,445 supported
+documents from the external `H:\configs` snapshot, including 7,089 documents
+verified against concrete Hub revisions and exact byte hashes. The remaining
+9,356 legacy snapshot documents have no matching revision file record and are
+not claimed as independently reproducible. Bulk third-party files remain
+outside Git; this repository stores revision-backed inventory metadata, audit
+results, tooling, and small attributed conformance fixtures. See
+[corpus/README.md](corpus/README.md) for reproduction commands and strict-JSON
+findings.
 
 ## Development
 
