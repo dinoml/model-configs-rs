@@ -303,6 +303,19 @@ pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
         || url_query_has_secret
 }
 
+pub(crate) fn manifest_sensitive_json_pointer(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    if !value.starts_with('/') {
+        return manifest_sensitive_text(value);
+    }
+    value.split('/').skip(1).any(|token| {
+        let token = token.replace("~1", "/").replace("~0", "~");
+        manifest_sensitive_key(&token) || manifest_sensitive_text(&token)
+    })
+}
+
 fn manifest_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     let safe_special_token = matches!(

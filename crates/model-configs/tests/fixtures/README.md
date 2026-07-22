@@ -3,9 +3,14 @@
 These small configuration-only fixtures are retained for deterministic, offline
 conformance tests. They do not include weights or executable remote code.
 
-- `qwen3-tiny/` is from `llamafactory/tiny-random-qwen3`, collected by the
-  DinoML Qwen3 source audit on 2026-07-22. The generation configuration is from
-  `Qwen/Qwen3-0.6B` at the same audit point.
+- `qwen3-tiny/config.json` is from `llamafactory/tiny-random-qwen3` revision
+  `81d6f5f5e05ed53ea8a1d19431266a486e46bbd8`, collected by the DinoML Qwen3
+  source audit on 2026-07-22. The fixture adds a final LF; its SHA-256 is
+  `1a4902678c080a6747be22cee1b42a5f59c43ee2050a3440b7b42c18f4733e40`.
+  `qwen3-tiny/generation_config.json` is from `Qwen/Qwen3-0.6B` revision
+  `c1899de289a04d12100db370d81485cdf75e47ca`; it was JSON-reserialized with
+  two-space indentation and a final LF and has SHA-256
+  `81e8e13e77962857509cc06a9960bb68f8b7893096a60357627b2dfaa72d78fe`.
 - `flux-schnell/` is from `black-forest-labs/FLUX.1-schnell` revision
   `741f7c3ce8b383c54771c7003378a50191e9efe9`, collected on 2026-07-22.
 - `real-formats/` contains one small source document for each remaining format:

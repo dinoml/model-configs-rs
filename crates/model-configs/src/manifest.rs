@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
@@ -70,7 +71,7 @@ impl CompatibilityManifest {
             if diagnostic
                 .json_path
                 .as_ref()
-                .is_some_and(|path| crate::normalize::manifest_sensitive_text(path))
+                .is_some_and(|path| crate::normalize::manifest_sensitive_json_pointer(path))
             {
                 diagnostic.json_path = None;
             }
@@ -102,8 +103,15 @@ impl CompatibilityManifest {
     /// # Errors
     ///
     /// Returns an error for malformed JSON, a missing or invalid schema version,
-    /// an unsupported schema version, or a non-portable repository path.
+    /// an unsupported schema version, resource-limit violations, or invalid
+    /// document identity metadata.
     pub fn from_json(source: &str) -> Result<Self, ManifestReadError> {
+        if source.len() > crate::MAX_SOURCE_DOCUMENT_BYTES {
+            return Err(ManifestReadError::SourceTooLarge {
+                size: source.len(),
+                limit: crate::MAX_SOURCE_DOCUMENT_BYTES,
+            });
+        }
         let duplicate_scan = crate::json_scan::duplicate_keys(source.as_bytes())?;
         if !duplicate_scan.pointers.is_empty() || duplicate_scan.truncated {
             return Err(ManifestReadError::DuplicateObjectMember {
@@ -125,11 +133,41 @@ impl CompatibilityManifest {
             });
         }
         let wire: CompatibilityManifestWire = serde_json::from_value(value)?;
+        if wire.documents.len() > crate::MAX_REPOSITORY_DOCUMENTS {
+            return Err(ManifestReadError::DocumentLimit {
+                count: wire.documents.len(),
+                limit: crate::MAX_REPOSITORY_DOCUMENTS,
+            });
+        }
+        if wire.diagnostics.len() > crate::MAX_REPOSITORY_DIAGNOSTICS {
+            return Err(ManifestReadError::DiagnosticLimit {
+                count: wire.diagnostics.len(),
+                limit: crate::MAX_REPOSITORY_DIAGNOSTICS,
+            });
+        }
         let mut documents = Vec::with_capacity(wire.documents.len());
+        let mut paths = BTreeSet::new();
         for document in wire.documents {
             let path = Path::new(&document.path);
             if crate::path_serde::validate(path).is_err() {
                 return Err(ManifestReadError::UnsafeDocumentPath {
+                    path: document.path,
+                });
+            }
+            let Some(expected_kind) = DocumentKind::for_path(path) else {
+                return Err(ManifestReadError::UnsupportedDocumentPath {
+                    path: document.path,
+                });
+            };
+            if document.kind != expected_kind {
+                return Err(ManifestReadError::DocumentKindMismatch {
+                    path: document.path,
+                    expected: expected_kind,
+                    found: document.kind,
+                });
+            }
+            if !paths.insert(document.path.clone()) {
+                return Err(ManifestReadError::DuplicateDocumentPath {
                     path: document.path,
                 });
             }
@@ -198,10 +236,62 @@ pub enum ManifestReadError {
         /// Unrecognized source schema version.
         found: u64,
     },
+    /// The serialized manifest exceeds the bounded parser input size.
+    #[error("compatibility manifest is {size} bytes, exceeding the {limit}-byte limit")]
+    SourceTooLarge {
+        /// Observed UTF-8 byte length.
+        size: usize,
+        /// Maximum accepted UTF-8 byte length.
+        limit: usize,
+    },
+    /// A manifest lists more source documents than a repository may retain.
+    #[error(
+        "compatibility manifest contains {count} documents, exceeding the {limit}-document limit"
+    )]
+    DocumentLimit {
+        /// Observed document count.
+        count: usize,
+        /// Maximum accepted document count.
+        limit: usize,
+    },
+    /// A manifest carries more diagnostics than one validation pass may emit.
+    #[error(
+        "compatibility manifest contains {count} diagnostics, exceeding the {limit}-diagnostic limit"
+    )]
+    DiagnosticLimit {
+        /// Observed diagnostic count.
+        count: usize,
+        /// Maximum accepted diagnostic count.
+        limit: usize,
+    },
     /// A document entry contains a non-portable repository path.
     #[error("compatibility manifest document path is not portable: {path}")]
     UnsafeDocumentPath {
         /// Invalid source path spelling.
+        path: String,
+    },
+    /// A path does not identify a supported configuration document.
+    #[error("compatibility manifest path is not a supported document: {path}")]
+    UnsupportedDocumentPath {
+        /// Unsupported repository-relative path.
+        path: String,
+    },
+    /// A document's declared kind does not match its path.
+    #[error(
+        "compatibility manifest document kind mismatch for {path}: expected {expected:?}, found {found:?}"
+    )]
+    DocumentKindMismatch {
+        /// Repository-relative source path.
+        path: String,
+        /// Kind implied by the supported filename.
+        expected: DocumentKind,
+        /// Kind declared in the manifest.
+        found: DocumentKind,
+    },
+    /// Two fingerprint entries use the same logical repository path.
+    #[error("compatibility manifest repeats document path {path}")]
+    DuplicateDocumentPath {
+        /// Repeated repository-relative path.
         path: String,
     },
     /// A document entry does not contain a lowercase SHA-256 digest.

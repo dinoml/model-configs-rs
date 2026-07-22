@@ -3,8 +3,8 @@
 use std::fs;
 
 use model_configs::{
-    CompatibilityManifest, DiagnosticCode, MANIFEST_SCHEMA_VERSION, ManifestReadError,
-    ModelRepository, NORMALIZATION_PROFILE,
+    CompatibilityManifest, DiagnosticCode, MANIFEST_SCHEMA_VERSION, MAX_REPOSITORY_DIAGNOSTICS,
+    MAX_REPOSITORY_DOCUMENTS, ManifestReadError, ModelRepository, NORMALIZATION_PROFILE,
 };
 
 #[test]
@@ -116,6 +116,61 @@ fn manifest_reader_rejects_invalid_document_digests() {
 }
 
 #[test]
+fn manifest_reader_rejects_duplicate_paths_and_kind_mismatches() {
+    let digest = "0000000000000000000000000000000000000000000000000000000000000000";
+    let duplicate = CompatibilityManifest::from_json(&format!(
+        r#"{{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[{{"path":"config.json","kind":"config","sha256":"{digest}","size":0}},{{"path":"config.json","kind":"config","sha256":"{digest}","size":0}}],"normalized":null,"diagnostics":[]}}"#,
+    ));
+    let mismatch = CompatibilityManifest::from_json(&format!(
+        r#"{{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[{{"path":"config.json","kind":"adapter_config","sha256":"{digest}","size":0}}],"normalized":null,"diagnostics":[]}}"#,
+    ));
+    let unsupported = CompatibilityManifest::from_json(&format!(
+        r#"{{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[{{"path":"README.md","kind":"config","sha256":"{digest}","size":0}}],"normalized":null,"diagnostics":[]}}"#,
+    ));
+
+    assert!(matches!(
+        duplicate,
+        Err(ManifestReadError::DuplicateDocumentPath { .. })
+    ));
+    assert!(matches!(
+        mismatch,
+        Err(ManifestReadError::DocumentKindMismatch { .. })
+    ));
+    assert!(matches!(
+        unsupported,
+        Err(ManifestReadError::UnsupportedDocumentPath { .. })
+    ));
+}
+
+#[test]
+fn manifest_reader_bounds_document_and_diagnostic_arrays() {
+    let document = r#"{"path":"config.json","kind":"config","sha256":"0000000000000000000000000000000000000000000000000000000000000000","size":0}"#;
+    let documents = std::iter::repeat_n(document, MAX_REPOSITORY_DOCUMENTS + 1)
+        .collect::<Vec<_>>()
+        .join(",");
+    let document_result = CompatibilityManifest::from_json(&format!(
+        r#"{{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[{documents}],"normalized":null,"diagnostics":[]}}"#,
+    ));
+
+    let diagnostic = r#"{"level":"warning","code":"unknown","message":"x","document_path":null,"json_path":null,"related_path":null}"#;
+    let diagnostics = std::iter::repeat_n(diagnostic, MAX_REPOSITORY_DIAGNOSTICS + 1)
+        .collect::<Vec<_>>()
+        .join(",");
+    let diagnostic_result = CompatibilityManifest::from_json(&format!(
+        r#"{{"schema_version":1,"normalization_profile":"dinoml-v1","documents":[],"normalized":null,"diagnostics":[{diagnostics}]}}"#,
+    ));
+
+    assert!(matches!(
+        document_result,
+        Err(ManifestReadError::DocumentLimit { .. })
+    ));
+    assert!(matches!(
+        diagnostic_result,
+        Err(ManifestReadError::DiagnosticLimit { .. })
+    ));
+}
+
+#[test]
 fn path_bearing_public_values_reject_unsafe_deserialization() {
     let diagnostic = serde_json::from_str::<model_configs::Diagnostic>(
         r#"{"level":"warning","code":"unknown","message":"x","document_path":"../config.json","json_path":null,"related_path":null}"#,
@@ -217,5 +272,31 @@ fn sensitive_identity_omission_is_explicitly_diagnosed() -> Result<(), Box<dyn s
             .any(|diagnostic| { diagnostic.code == DiagnosticCode::ManifestSensitiveDataOmitted })
     );
     assert!(!manifest.to_json_pretty()?.contains("user:secret"));
+    Ok(())
+}
+
+#[test]
+fn manifest_preserves_ordinary_json_pointers_and_omits_sensitive_tokens()
+-> Result<(), Box<dyn std::error::Error>> {
+    let documents = vec![
+        model_configs::SourceDocument::parse(
+            "config.json",
+            br#"{"model_type":"example","vocab_size":"bad"}"#,
+        )?,
+        model_configs::SourceDocument::parse(
+            "tokenizer_config.json",
+            br#"{"added_tokens_decoder":{"0":false,"auth_token":42}}"#,
+        )?,
+    ];
+    let manifest = ModelRepository::from_documents(documents)?.manifest()?;
+    let pointers = manifest
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic.json_path.as_deref())
+        .collect::<Vec<_>>();
+
+    assert!(pointers.contains(&"/vocab_size"));
+    assert!(pointers.contains(&"/added_tokens_decoder/0"));
+    assert!(!manifest.to_json_pretty()?.contains("auth_token"));
     Ok(())
 }
