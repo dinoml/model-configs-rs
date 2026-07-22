@@ -572,6 +572,13 @@ fn is_excluded_metadata_name(name: &std::ffi::OsStr) -> bool {
         .any(|excluded| name == *excluded)
 }
 
+#[cfg_attr(
+    not(windows),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "the Windows implementation must propagate reparse-point metadata errors"
+    )
+)]
 fn is_link_like(path: &Path, file_type: std::fs::FileType) -> Result<bool, ConfigError> {
     if file_type.is_symlink() {
         return Ok(true);
