@@ -258,6 +258,12 @@ fn validate_semantic_fields(document: &SourceDocument, diagnostics: &mut Vec<Dia
         }
         validate_typed_field(document, object.get(*field), field, *shape, diagnostics);
     }
+    if matches!(
+        document.kind(),
+        DocumentKind::TokenizerConfig | DocumentKind::SpecialTokensMap
+    ) {
+        validate_special_token_fields(document, object, diagnostics);
+    }
     match document.kind() {
         DocumentKind::Config => {
             validate_architectures(document, object.get("architectures"), diagnostics);
@@ -392,6 +398,133 @@ const TOKENIZER_FIELDS: &[(&str, FieldShape)] = &[
     ("clean_up_tokenization_spaces", FieldShape::Bool),
     ("add_prefix_space", FieldShape::Bool),
 ];
+
+const SPECIAL_TOKEN_FIELDS: &[&str] = &[
+    "bos_token",
+    "eos_token",
+    "unk_token",
+    "sep_token",
+    "pad_token",
+    "cls_token",
+    "mask_token",
+];
+
+fn validate_special_token_fields(
+    document: &SourceDocument,
+    object: &serde_json::Map<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for field in SPECIAL_TOKEN_FIELDS {
+        if crate::diagnostic::limit_reached(diagnostics) {
+            return;
+        }
+        match object.get(*field) {
+            None | Some(Value::Null | Value::String(_)) => {}
+            Some(Value::Object(token)) => {
+                let pointer = format!("/{}", escape_pointer(field));
+                validate_added_token(document, token, Some(&pointer), diagnostics);
+            }
+            Some(_) => invalid_field(
+                document,
+                format!("/{}", escape_pointer(field)),
+                format!("{field} must be a string, added-token object, or null"),
+                diagnostics,
+            ),
+        }
+    }
+
+    match object.get("additional_special_tokens") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(values)) => {
+            for (index, value) in values.iter().enumerate() {
+                if crate::diagnostic::limit_reached(diagnostics) {
+                    return;
+                }
+                let pointer = bounded_pointer_index(Some("/additional_special_tokens"), index);
+                match value {
+                    Value::String(_) => {}
+                    Value::Object(token) => {
+                        validate_added_token(document, token, pointer.as_deref(), diagnostics);
+                    }
+                    _ => invalid_field_at(
+                        document,
+                        pointer,
+                        "additional_special_tokens entries must be strings or added-token objects",
+                        diagnostics,
+                    ),
+                }
+            }
+        }
+        Some(_) => invalid_field(
+            document,
+            "/additional_special_tokens".into(),
+            "additional_special_tokens must be an array or null",
+            diagnostics,
+        ),
+    }
+
+    if document.kind() != &DocumentKind::TokenizerConfig {
+        return;
+    }
+    match object.get("added_tokens_decoder") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(entries)) => {
+            for (id, value) in entries {
+                if crate::diagnostic::limit_reached(diagnostics) {
+                    return;
+                }
+                let pointer = bounded_pointer_child(Some("/added_tokens_decoder"), id);
+                match value {
+                    Value::String(_) => {}
+                    Value::Object(token) => {
+                        validate_added_token(document, token, pointer.as_deref(), diagnostics);
+                    }
+                    _ => invalid_field_at(
+                        document,
+                        pointer,
+                        "added_tokens_decoder values must be strings or added-token objects",
+                        diagnostics,
+                    ),
+                }
+            }
+        }
+        Some(_) => invalid_field(
+            document,
+            "/added_tokens_decoder".into(),
+            "added_tokens_decoder must be an object or null",
+            diagnostics,
+        ),
+    }
+}
+
+fn validate_added_token(
+    document: &SourceDocument,
+    token: &serde_json::Map<String, Value>,
+    pointer: Option<&str>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if !matches!(token.get("content"), Some(Value::String(_))) {
+        invalid_field_at(
+            document,
+            bounded_pointer_child(pointer, "content"),
+            "added-token content must be a string",
+            diagnostics,
+        );
+    }
+    for field in ["single_word", "lstrip", "rstrip", "normalized", "special"] {
+        let Some(value) = token.get(field) else {
+            continue;
+        };
+        if !value.is_null() && !value.is_boolean() {
+            invalid_field_at(
+                document,
+                bounded_pointer_child(pointer, field),
+                format!("added-token {field} must be a boolean or null"),
+                diagnostics,
+            );
+        }
+    }
+}
 
 const PREPROCESSOR_FIELDS: &[(&str, FieldShape)] = &[
     ("feature_extractor_type", FieldShape::String),

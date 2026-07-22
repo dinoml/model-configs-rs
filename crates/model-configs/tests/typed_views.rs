@@ -2,7 +2,9 @@
 
 use std::fs;
 
-use model_configs::{DocumentKind, ModelRepository, SourceField, TypedDocumentView, ViewError};
+use model_configs::{
+    DocumentKind, ModelRepository, SourceField, SpecialTokenValue, TypedDocumentView, ViewError,
+};
 use serde_json::json;
 
 #[test]
@@ -99,14 +101,19 @@ fn every_supported_document_kind_has_a_typed_view() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn special_token_values_remain_raw_when_polymorphic() -> Result<(), Box<dyn std::error::Error>> {
+fn special_token_values_have_typed_polymorphic_views() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     fs::write(
         temp.path().join("special_tokens_map.json"),
         r#"{
             "bos_token": "<s>",
             "eos_token": {"content":"</s>","lstrip":false},
-            "pad_token": null
+            "pad_token": null,
+            "additional_special_tokens": [
+                "<extra>",
+                {"content":"<structured>","special":true},
+                42
+            ]
         }"#,
     )?;
     let repository = ModelRepository::read(temp.path())?;
@@ -116,14 +123,89 @@ fn special_token_values_remain_raw_when_polymorphic() -> Result<(), Box<dyn std:
         return Err("expected special tokens view".into());
     };
 
+    assert!(matches!(
+        view.bos_token(),
+        SourceField::Value(SpecialTokenValue::String("<s>"))
+    ));
+    let SourceField::Value(SpecialTokenValue::AddedToken(eos)) = view.eos_token() else {
+        return Err("expected structured eos token".into());
+    };
     assert_eq!(
-        (view.bos_token(), view.eos_token(), view.pad_token()),
+        (eos.content(), eos.lstrip(), eos.special()),
         (
-            SourceField::Value(&json!("<s>")),
-            SourceField::Value(&json!({"content":"</s>","lstrip":false})),
+            SourceField::Value("</s>"),
+            SourceField::Value(false),
+            SourceField::Missing,
+        )
+    );
+    assert_eq!(view.pad_token(), SourceField::Null);
+    let SourceField::Value(tokens) = view.additional_special_tokens() else {
+        return Err("expected additional special tokens".into());
+    };
+    let tokens = tokens.collect::<Vec<_>>();
+    assert!(matches!(tokens[0], SpecialTokenValue::String("<extra>")));
+    let SpecialTokenValue::AddedToken(token) = tokens[1] else {
+        return Err("expected structured additional token".into());
+    };
+    assert_eq!(
+        (token.content(), token.special()),
+        (SourceField::Value("<structured>"), SourceField::Value(true))
+    );
+    assert!(matches!(tokens[2], SpecialTokenValue::Invalid(value) if value == &json!(42)));
+    Ok(())
+}
+
+#[test]
+fn tokenizer_added_token_decoder_exposes_ids_and_metadata() -> Result<(), Box<dyn std::error::Error>>
+{
+    let document = model_configs::SourceDocument::parse(
+        "tokenizer_config.json",
+        br#"{
+            "added_tokens_decoder": {
+                "0": "<plain>",
+                "1": {
+                    "content": "<typed>",
+                    "single_word": true,
+                    "rstrip": false,
+                    "normalized": null
+                },
+                "2": false
+            }
+        }"#,
+    )?;
+    let TypedDocumentView::TokenizerConfig(view) = TypedDocumentView::try_from(&document)? else {
+        return Err("expected tokenizer view".into());
+    };
+    let SourceField::Value(entries) = view.added_tokens_decoder() else {
+        return Err("expected added-token decoder".into());
+    };
+    let entries = entries.collect::<Vec<_>>();
+
+    assert!(matches!(
+        entries[0],
+        ("0", SpecialTokenValue::String("<plain>"))
+    ));
+    let ("1", SpecialTokenValue::AddedToken(token)) = entries[1] else {
+        return Err("expected structured decoder token".into());
+    };
+    assert_eq!(
+        (
+            token.content(),
+            token.single_word(),
+            token.rstrip(),
+            token.normalized(),
+        ),
+        (
+            SourceField::Value("<typed>"),
+            SourceField::Value(true),
+            SourceField::Value(false),
             SourceField::Null,
         )
     );
+    assert!(matches!(
+        entries[2],
+        ("2", SpecialTokenValue::Invalid(value)) if value == &json!(false)
+    ));
     Ok(())
 }
 

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::{ChatTemplateError, ModelRepository, SourceDocument};
+use crate::{ChatTemplateError, ConfigError, ModelRepository, SelectionError, SourceDocument};
 
 /// Source selected by a versioned repository-level precedence rule.
 #[derive(Clone, Copy, Debug)]
@@ -51,13 +51,37 @@ impl ModelRepository {
     /// generation field. No values are merged across the two documents.
     #[must_use]
     pub fn generation_source(&self) -> Option<SourceSelection<'_>> {
-        if let Some(document) = self.document("generation_config.json") {
+        self.generation_source_at(Path::new(""))
+    }
+
+    /// Selects the generation source inside a component-relative scope.
+    ///
+    /// The scope must be a non-empty portable repository-relative directory.
+    /// Use [`Self::generation_source`] for the repository root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `scope` is not a safe portable relative path.
+    pub fn generation_source_in(
+        &self,
+        scope: impl AsRef<Path>,
+    ) -> Result<Option<SourceSelection<'_>>, ConfigError> {
+        let scope = scope.as_ref();
+        crate::path_serde::validate(scope)?;
+        Ok(self.generation_source_at(scope))
+    }
+
+    fn generation_source_at(&self, scope: &Path) -> Option<SourceSelection<'_>> {
+        if let Some(document) = self.document(scope.join("generation_config.json")) {
             return Some(SourceSelection {
                 document,
                 json_pointer: None,
             });
         }
-        let config = self.document("config.json")?;
+        let config = self.document(scope.join("config.json"))?;
+        if config.has_duplicate_keys() {
+            return None;
+        }
         let object = config.json()?.as_object()?;
         GENERATION_FIELDS
             .iter()
@@ -77,7 +101,26 @@ impl ModelRepository {
     pub fn tokenizer_chat_template(
         &self,
     ) -> Result<Option<ChatTemplateSelection<'_>>, ChatTemplateError> {
-        self.chat_template_from("tokenizer_config.json")
+        self.chat_template_from_at(Path::new(""), "tokenizer_config.json")
+    }
+
+    /// Selects the tokenizer chat template inside a component-relative scope.
+    ///
+    /// The scope must be a non-empty portable repository-relative directory.
+    /// Use [`Self::tokenizer_chat_template`] for the repository root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `scope` is unsafe or when the selected standalone
+    /// `chat_template.jinja` is not valid UTF-8.
+    pub fn tokenizer_chat_template_in(
+        &self,
+        scope: impl AsRef<Path>,
+    ) -> Result<Option<ChatTemplateSelection<'_>>, SelectionError> {
+        let scope = scope.as_ref();
+        crate::path_serde::validate(scope)?;
+        self.chat_template_from_at(scope, "tokenizer_config.json")
+            .map_err(SelectionError::from)
     }
 
     /// Selects the processor chat template using the `dinoml-v1` profile.
@@ -89,14 +132,34 @@ impl ModelRepository {
     pub fn processor_chat_template(
         &self,
     ) -> Result<Option<ChatTemplateSelection<'_>>, ChatTemplateError> {
-        self.chat_template_from("processor_config.json")
+        self.chat_template_from_at(Path::new(""), "processor_config.json")
     }
 
-    fn chat_template_from(
+    /// Selects the processor chat template inside a component-relative scope.
+    ///
+    /// The scope must be a non-empty portable repository-relative directory.
+    /// Use [`Self::processor_chat_template`] for the repository root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `scope` is unsafe or when the selected standalone
+    /// `chat_template.jinja` is not valid UTF-8.
+    pub fn processor_chat_template_in(
         &self,
+        scope: impl AsRef<Path>,
+    ) -> Result<Option<ChatTemplateSelection<'_>>, SelectionError> {
+        let scope = scope.as_ref();
+        crate::path_serde::validate(scope)?;
+        self.chat_template_from_at(scope, "processor_config.json")
+            .map_err(SelectionError::from)
+    }
+
+    fn chat_template_from_at(
+        &self,
+        scope: &Path,
         inline_document: &str,
     ) -> Result<Option<ChatTemplateSelection<'_>>, ChatTemplateError> {
-        if let Some(document) = self.document("chat_template.jinja") {
+        if let Some(document) = self.document(scope.join("chat_template.jinja")) {
             let content = document
                 .text()
                 .map_err(|source| ChatTemplateError::InvalidUtf8 {
@@ -114,7 +177,7 @@ impl ModelRepository {
                 },
             }));
         }
-        let Some(document) = self.document(Path::new(inline_document)) else {
+        let Some(document) = self.document(scope.join(inline_document)) else {
             return Ok(None);
         };
         if document.has_duplicate_keys() {

@@ -142,6 +142,160 @@ fn raw_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a, &
     }
 }
 
+/// A source special-token value in its string or structured added-token form.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum SpecialTokenValue<'a> {
+    /// Plain token text.
+    String(&'a str),
+    /// Structured Transformers added-token metadata.
+    AddedToken(AddedTokenView<'a>),
+    /// An element inside a typed collection has an unsupported shape.
+    Invalid(&'a Value),
+}
+
+/// Borrowed structured added-token metadata.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AddedTokenView<'a> {
+    object: &'a Map<String, Value>,
+}
+
+impl<'a> AddedTokenView<'a> {
+    /// Returns the unmodified added-token object.
+    #[must_use]
+    pub const fn raw(self) -> &'a Map<String, Value> {
+        self.object
+    }
+
+    /// Returns the token content.
+    #[must_use]
+    pub fn content(self) -> SourceField<'a, &'a str> {
+        string_field(self.object, "content")
+    }
+
+    /// Returns whether matching is restricted to a complete word.
+    #[must_use]
+    pub fn single_word(self) -> SourceField<'a, bool> {
+        bool_field(self.object, "single_word")
+    }
+
+    /// Returns whether left-side whitespace is consumed.
+    #[must_use]
+    pub fn lstrip(self) -> SourceField<'a, bool> {
+        bool_field(self.object, "lstrip")
+    }
+
+    /// Returns whether right-side whitespace is consumed.
+    #[must_use]
+    pub fn rstrip(self) -> SourceField<'a, bool> {
+        bool_field(self.object, "rstrip")
+    }
+
+    /// Returns whether the token participates in normalization.
+    #[must_use]
+    pub fn normalized(self) -> SourceField<'a, bool> {
+        bool_field(self.object, "normalized")
+    }
+
+    /// Returns whether this is explicitly a special token.
+    #[must_use]
+    pub fn special(self) -> SourceField<'a, bool> {
+        bool_field(self.object, "special")
+    }
+}
+
+/// Iterator over a source array of special-token values.
+#[derive(Clone, Debug)]
+pub struct SpecialTokenValues<'a> {
+    values: std::slice::Iter<'a, Value>,
+}
+
+impl<'a> Iterator for SpecialTokenValues<'a> {
+    type Item = SpecialTokenValue<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.values.next().map(classify_special_token)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.values.size_hint()
+    }
+}
+
+impl ExactSizeIterator for SpecialTokenValues<'_> {}
+
+/// Iterator over `added_tokens_decoder` source entries.
+#[derive(Clone, Debug)]
+pub struct AddedTokenDecoderEntries<'a> {
+    entries: serde_json::map::Iter<'a>,
+}
+
+impl<'a> Iterator for AddedTokenDecoderEntries<'a> {
+    type Item = (&'a str, SpecialTokenValue<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries
+            .next()
+            .map(|(id, value)| (id.as_str(), classify_special_token(value)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.entries.size_hint()
+    }
+}
+
+impl ExactSizeIterator for AddedTokenDecoderEntries<'_> {}
+
+fn classify_special_token(value: &Value) -> SpecialTokenValue<'_> {
+    match value {
+        Value::String(value) => SpecialTokenValue::String(value),
+        Value::Object(object) => SpecialTokenValue::AddedToken(AddedTokenView { object }),
+        value => SpecialTokenValue::Invalid(value),
+    }
+}
+
+fn special_token_field<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> SourceField<'a, SpecialTokenValue<'a>> {
+    match object.get(key) {
+        None => SourceField::Missing,
+        Some(Value::Null) => SourceField::Null,
+        Some(value @ (Value::String(_) | Value::Object(_))) => {
+            SourceField::Value(classify_special_token(value))
+        }
+        Some(value) => SourceField::Invalid(value),
+    }
+}
+
+fn special_token_values_field<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> SourceField<'a, SpecialTokenValues<'a>> {
+    match object.get(key) {
+        None => SourceField::Missing,
+        Some(Value::Null) => SourceField::Null,
+        Some(Value::Array(values)) => SourceField::Value(SpecialTokenValues {
+            values: values.iter(),
+        }),
+        Some(value) => SourceField::Invalid(value),
+    }
+}
+
+fn added_token_decoder_field<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> SourceField<'a, AddedTokenDecoderEntries<'a>> {
+    match object.get(key) {
+        None => SourceField::Missing,
+        Some(Value::Null) => SourceField::Null,
+        Some(Value::Object(entries)) => SourceField::Value(AddedTokenDecoderEntries {
+            entries: entries.iter(),
+        }),
+        Some(value) => SourceField::Invalid(value),
+    }
+}
+
 fn string_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a, &'a str> {
     match object.get(key) {
         None => SourceField::Missing,
@@ -723,58 +877,58 @@ impl<'a> TokenizerConfigView<'a> {
         bool_field(self.raw(), "add_prefix_space")
     }
 
-    /// Returns the unmodified beginning-of-sequence token value.
+    /// Returns the beginning-of-sequence token value.
     #[must_use]
-    pub fn bos_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "bos_token")
+    pub fn bos_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "bos_token")
     }
 
     /// Returns the unmodified end-of-sequence token value.
     #[must_use]
-    pub fn eos_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "eos_token")
+    pub fn eos_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "eos_token")
     }
 
     /// Returns the unmodified unknown token value.
     #[must_use]
-    pub fn unk_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "unk_token")
+    pub fn unk_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "unk_token")
     }
 
     /// Returns the unmodified separator token value.
     #[must_use]
-    pub fn sep_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "sep_token")
+    pub fn sep_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "sep_token")
     }
 
     /// Returns the unmodified padding token value.
     #[must_use]
-    pub fn pad_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "pad_token")
+    pub fn pad_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "pad_token")
     }
 
     /// Returns the unmodified classification token value.
     #[must_use]
-    pub fn cls_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "cls_token")
+    pub fn cls_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "cls_token")
     }
 
     /// Returns the unmodified mask token value.
     #[must_use]
-    pub fn mask_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "mask_token")
+    pub fn mask_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "mask_token")
     }
 
     /// Returns the unmodified additional special tokens.
     #[must_use]
-    pub fn additional_special_tokens(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "additional_special_tokens")
+    pub fn additional_special_tokens(&self) -> SourceField<'a, SpecialTokenValues<'a>> {
+        special_token_values_field(self.raw(), "additional_special_tokens")
     }
 
     /// Returns the unmodified added-token decoder mapping.
     #[must_use]
-    pub fn added_tokens_decoder(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "added_tokens_decoder")
+    pub fn added_tokens_decoder(&self) -> SourceField<'a, AddedTokenDecoderEntries<'a>> {
+        added_token_decoder_field(self.raw(), "added_tokens_decoder")
     }
 
     /// Returns the unmodified inline chat template value.
@@ -802,50 +956,50 @@ json_view!(
 impl<'a> SpecialTokensMapView<'a> {
     /// Returns the unmodified beginning-of-sequence token value.
     #[must_use]
-    pub fn bos_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "bos_token")
+    pub fn bos_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "bos_token")
     }
 
     /// Returns the unmodified end-of-sequence token value.
     #[must_use]
-    pub fn eos_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "eos_token")
+    pub fn eos_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "eos_token")
     }
 
     /// Returns the unmodified unknown token value.
     #[must_use]
-    pub fn unk_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "unk_token")
+    pub fn unk_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "unk_token")
     }
 
     /// Returns the unmodified separator token value.
     #[must_use]
-    pub fn sep_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "sep_token")
+    pub fn sep_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "sep_token")
     }
 
     /// Returns the unmodified padding token value.
     #[must_use]
-    pub fn pad_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "pad_token")
+    pub fn pad_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "pad_token")
     }
 
     /// Returns the unmodified classification token value.
     #[must_use]
-    pub fn cls_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "cls_token")
+    pub fn cls_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "cls_token")
     }
 
     /// Returns the unmodified mask token value.
     #[must_use]
-    pub fn mask_token(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "mask_token")
+    pub fn mask_token(&self) -> SourceField<'a, SpecialTokenValue<'a>> {
+        special_token_field(self.raw(), "mask_token")
     }
 
     /// Returns the unmodified additional special tokens.
     #[must_use]
-    pub fn additional_special_tokens(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "additional_special_tokens")
+    pub fn additional_special_tokens(&self) -> SourceField<'a, SpecialTokenValues<'a>> {
+        special_token_values_field(self.raw(), "additional_special_tokens")
     }
 }
 

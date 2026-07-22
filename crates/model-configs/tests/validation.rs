@@ -373,6 +373,65 @@ fn every_typed_format_reports_wrong_field_shapes() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn malformed_added_tokens_report_precise_shape_diagnostics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    fs::write(
+        temp.path().join("special_tokens_map.json"),
+        r#"{
+            "bos_token": 42,
+            "eos_token": {"content":7,"lstrip":"yes"},
+            "additional_special_tokens": [
+                {"content":"valid","special":1},
+                false
+            ]
+        }"#,
+    )?;
+    fs::write(
+        temp.path().join("tokenizer_config.json"),
+        r#"{
+            "added_tokens_decoder": {
+                "0": {"lstrip":false},
+                "1": []
+            }
+        }"#,
+    )?;
+    let diagnostics = ModelRepository::read(temp.path())?.diagnostics();
+    let locations = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::InvalidDocumentShape)
+        .map(|diagnostic| {
+            (
+                diagnostic.document_path().map(std::path::Path::to_path_buf),
+                diagnostic.json_path.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    for (document, pointer) in [
+        ("special_tokens_map.json", "/bos_token"),
+        ("special_tokens_map.json", "/eos_token/content"),
+        ("special_tokens_map.json", "/eos_token/lstrip"),
+        (
+            "special_tokens_map.json",
+            "/additional_special_tokens/0/special",
+        ),
+        ("special_tokens_map.json", "/additional_special_tokens/1"),
+        ("tokenizer_config.json", "/added_tokens_decoder/0/content"),
+        ("tokenizer_config.json", "/added_tokens_decoder/1"),
+    ] {
+        assert!(
+            locations.contains(&(
+                Some(std::path::PathBuf::from(document)),
+                Some(pointer.to_owned())
+            )),
+            "missing {document} diagnostic at {pointer}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn wrong_typed_model_index_metadata_is_not_a_component() -> Result<(), Box<dyn std::error::Error>> {
     let document = SourceDocument::parse(
         "model_index.json",

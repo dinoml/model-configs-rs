@@ -23,7 +23,7 @@ pub use document::{
     DocumentKind, JsonError, JsonErrorCategory, MAX_DUPLICATE_KEY_LOCATION_BYTES,
     MAX_DUPLICATE_KEY_LOCATIONS, MAX_SOURCE_DOCUMENT_BYTES, SourceDocument,
 };
-pub use error::{ChatTemplateError, ConfigError, NormalizationError};
+pub use error::{ChatTemplateError, ConfigError, NormalizationError, SelectionError};
 pub use manifest::{
     CompatibilityManifest, MANIFEST_SCHEMA_VERSION, ManifestDocument, ManifestReadError,
 };
@@ -38,10 +38,11 @@ pub use repository::{
 };
 pub use selection::{ChatTemplateSelection, ChatTemplateValue, SourceSelection};
 pub use views::{
-    AdapterConfigView, ChatTemplateView, ConfigView, DiffusersComponent, DiffusersComponentValue,
-    DiffusersComponents, ExtraFields, GenerationConfigView, ModelIndexExtraFields, ModelIndexView,
-    PreprocessorConfigView, ProcessorConfigView, QuantizationConfigView, SafetensorsIndexView,
-    SafetensorsMetadataView, SafetensorsWeightMapEntries, SafetensorsWeightMapView,
-    SchedulerConfigView, SourceField, SpecialTokensMapView, TokenizerConfigView, TypedDocumentView,
-    ViewError,
+    AdapterConfigView, AddedTokenDecoderEntries, AddedTokenView, ChatTemplateView, ConfigView,
+    DiffusersComponent, DiffusersComponentValue, DiffusersComponents, ExtraFields,
+    GenerationConfigView, ModelIndexExtraFields, ModelIndexView, PreprocessorConfigView,
+    ProcessorConfigView, QuantizationConfigView, SafetensorsIndexView, SafetensorsMetadataView,
+    SafetensorsWeightMapEntries, SafetensorsWeightMapView, SchedulerConfigView, SourceField,
+    SpecialTokenValue, SpecialTokenValues, SpecialTokensMapView, TokenizerConfigView,
+    TypedDocumentView, ViewError,
 };

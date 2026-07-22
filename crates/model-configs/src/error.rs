@@ -98,6 +98,18 @@ pub enum ChatTemplateError {
     },
 }
 
+/// An operation-level error selecting configuration within a repository scope.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum SelectionError {
+    /// The requested repository scope is not a safe portable relative path.
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    /// The selected standalone chat template could not be decoded.
+    #[error(transparent)]
+    ChatTemplate(#[from] ChatTemplateError),
+}
+
 /// A content-level reason that a normalized repository view is unavailable.
 ///
 /// Source bytes and source-local views remain inspectable when this error is

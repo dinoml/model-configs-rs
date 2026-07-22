@@ -81,8 +81,13 @@ assert_eq!(repository.normalized()?.architecture.as_str(), "ExampleModel");
 ```
 
 `SourceDocument::typed_view` exposes source-local fields without defaults.
+Tokenizer views represent named tokens as `SpecialTokenValue` and expose
+structured `AddedTokenView` metadata without flattening the original JSON.
 `ModelRepository::normalized` applies only named `dinoml-v1` rules and returns a
 separate `NormalizationError` for content that cannot identify a repository.
+Root precedence helpers have validated `*_in(scope)` counterparts for nested
+components; dedicated generation and standalone template files remain
+authoritative within their own scope.
 
 ## Corpus
 
