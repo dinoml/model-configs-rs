@@ -114,7 +114,16 @@ impl fmt::Display for DiagnosticCode {
 }
 
 /// A validation message tied to source and related repository paths.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+///
+/// Diagnostics are produced by repository validation or a fully validated
+/// compatibility manifest; they cannot be forged through generic Serde
+/// deserialization.
+///
+/// ```compile_fail
+/// fn requires_deserialize<T: for<'de> serde::Deserialize<'de>>() {}
+/// requires_deserialize::<model_configs::Diagnostic>();
+/// ```
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     /// Severity of the finding.
     pub level: DiagnosticLevel,
@@ -138,6 +147,20 @@ pub struct Diagnostic {
         deserialize_with = "crate::path_serde::deserialize_option"
     )]
     pub(crate) related_path: Option<PathBuf>,
+}
+
+impl fmt::Debug for Diagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Diagnostic")
+            .field("level", &self.level)
+            .field("code", &self.code)
+            .field("message_byte_len", &self.message.len())
+            .field("has_document_path", &self.document_path.is_some())
+            .field("has_json_path", &self.json_path.is_some())
+            .field("has_related_path", &self.related_path.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Diagnostic {
@@ -227,16 +250,20 @@ pub(crate) fn push_bounded(diagnostics: &mut Vec<Diagnostic>, mut diagnostic: Di
             true
         }
         std::cmp::Ordering::Equal => {
-            diagnostics.push(Diagnostic::warning(
-                DiagnosticCode::DiagnosticLimitReached,
-                format!(
-                    "diagnostic output reached the {MAX_REPOSITORY_DIAGNOSTICS}-entry limit; additional findings were omitted"
-                ),
-            ));
+            diagnostics.push(limit_diagnostic());
             false
         }
         std::cmp::Ordering::Greater => false,
     }
+}
+
+pub(crate) fn limit_diagnostic() -> Diagnostic {
+    Diagnostic::warning(
+        DiagnosticCode::DiagnosticLimitReached,
+        format!(
+            "diagnostic output reached the {MAX_REPOSITORY_DIAGNOSTICS}-entry limit; additional findings were omitted"
+        ),
+    )
 }
 
 pub(crate) fn limit_reached(diagnostics: &[Diagnostic]) -> bool {

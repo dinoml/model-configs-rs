@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::{DocumentKind, NormalizationError, SourceDocument};
@@ -11,9 +11,18 @@ use crate::{DocumentKind, NormalizationError, SourceDocument};
 pub const NORMALIZATION_PROFILE: &str = "dinoml-v1";
 
 /// Stable architecture identity derived without loading implementation code.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ArchitectureId(String);
+
+impl fmt::Debug for ArchitectureId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ArchitectureId")
+            .field("byte_len", &self.0.len())
+            .finish_non_exhaustive()
+    }
+}
 
 impl ArchitectureId {
     /// Creates an architecture identifier from source configuration text.
@@ -36,7 +45,7 @@ impl fmt::Display for ArchitectureId {
 }
 
 /// Exact source field used to identify the normalized architecture.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
 pub enum ArchitectureSource {
@@ -51,7 +60,7 @@ pub enum ArchitectureSource {
 }
 
 /// A coarse model task explicitly declared by source configuration.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 #[non_exhaustive]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "value")]
 pub enum TaskKind {
@@ -91,6 +100,36 @@ pub enum TaskKind {
     Other(String),
 }
 
+impl fmt::Debug for TaskKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::TextGeneration => "TextGeneration",
+            Self::TextClassification => "TextClassification",
+            Self::TokenClassification => "TokenClassification",
+            Self::QuestionAnswering => "QuestionAnswering",
+            Self::FeatureExtraction => "FeatureExtraction",
+            Self::ImageClassification => "ImageClassification",
+            Self::ObjectDetection => "ObjectDetection",
+            Self::ImageSegmentation => "ImageSegmentation",
+            Self::AutomaticSpeechRecognition => "AutomaticSpeechRecognition",
+            Self::TextToSpeech => "TextToSpeech",
+            Self::TextToImage => "TextToImage",
+            Self::ImageToImage => "ImageToImage",
+            Self::Inpainting => "Inpainting",
+            Self::UnconditionalImageGeneration => "UnconditionalImageGeneration",
+            Self::VideoGeneration => "VideoGeneration",
+            Self::AudioGeneration => "AudioGeneration",
+            Self::Other(value) => {
+                return formatter
+                    .debug_struct("Other")
+                    .field("byte_len", &value.len())
+                    .finish_non_exhaustive();
+            }
+        };
+        formatter.write_str(kind)
+    }
+}
+
 impl TaskKind {
     pub(crate) fn from_source(value: String) -> Self {
         match value.as_str() {
@@ -116,7 +155,7 @@ impl TaskKind {
 }
 
 /// A component named by a pipeline or composite configuration.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub struct ComponentReference {
     /// Source field naming the component.
     pub name: String,
@@ -137,6 +176,20 @@ pub struct ComponentReference {
     pub requires_code: bool,
 }
 
+impl fmt::Debug for ComponentReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ComponentReference")
+            .field("name_byte_len", &self.name.len())
+            .field("has_path", &self.path.is_some())
+            .field("has_library", &self.library.is_some())
+            .field("has_architecture", &self.architecture.is_some())
+            .field("optional", &self.optional)
+            .field("requires_code", &self.requires_code)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ComponentReference {
     /// Returns the validated repository-relative component directory, if present.
     #[must_use]
@@ -146,7 +199,7 @@ impl ComponentReference {
 }
 
 /// A default materialized during normalization rather than present in source.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct AppliedDefault {
     /// JSON-pointer-like normalized field path.
     pub field: String,
@@ -156,8 +209,31 @@ pub struct AppliedDefault {
     pub rule: String,
 }
 
+impl fmt::Debug for AppliedDefault {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AppliedDefault")
+            .field("field_byte_len", &self.field.len())
+            .field("value_type", &json_type(&self.value))
+            .field("value_child_count", &json_child_count(&self.value))
+            .field("rule_byte_len", &self.rule.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A normalized, forward-compatible view of repository configuration.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+///
+/// Normalized values are produced only from retained source documents or a
+/// fully validated compatibility manifest; they cannot be forged through
+/// generic Serde deserialization.
+///
+/// ```compile_fail
+/// fn requires_deserialize<T: for<'de> serde::Deserialize<'de>>() {}
+/// requires_deserialize::<model_configs::ModelRepositoryConfig>();
+/// requires_deserialize::<model_configs::ComponentReference>();
+/// requires_deserialize::<model_configs::AppliedDefault>();
+/// ```
+#[derive(Clone, PartialEq, Serialize)]
 pub struct ModelRepositoryConfig {
     /// Root source document used for normalization.
     #[serde(
@@ -183,6 +259,48 @@ pub struct ModelRepositoryConfig {
     pub extra: BTreeMap<String, Value>,
     /// Defaults applied while constructing this view.
     pub applied_defaults: Vec<AppliedDefault>,
+}
+
+impl fmt::Debug for ModelRepositoryConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelRepositoryConfig")
+            .field(
+                "source_path_segments",
+                &self.source_path.components().count(),
+            )
+            .field("architecture_source", &self.architecture_source)
+            .field("has_model_type", &self.model_type.is_some())
+            .field(
+                "has_transformers_version",
+                &self.transformers_version.is_some(),
+            )
+            .field("has_diffusers_version", &self.diffusers_version.is_some())
+            .field("has_task", &self.task.is_some())
+            .field("component_count", &self.components.len())
+            .field("extra_field_count", &self.extra.len())
+            .field("applied_default_count", &self.applied_defaults.len())
+            .finish_non_exhaustive()
+    }
+}
+
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn json_child_count(value: &Value) -> Option<usize> {
+    match value {
+        Value::Array(values) => Some(values.len()),
+        Value::Object(object) => Some(object.len()),
+        _ => None,
+    }
 }
 
 impl ModelRepositoryConfig {
@@ -237,7 +355,44 @@ pub(crate) fn normalize(
 }
 
 pub(crate) fn manifest_safe(mut config: ModelRepositoryConfig) -> Option<ModelRepositoryConfig> {
-    let identity_is_sensitive = manifest_sensitive_path(config.source_path())
+    if manifest_identity_is_sensitive(&config) {
+        return None;
+    }
+    config.extra.retain(|key, value| {
+        if manifest_sensitive_key(key) || manifest_sensitive_text(key) {
+            return false;
+        }
+        redact_json(value);
+        true
+    });
+    config.applied_defaults.retain_mut(|default| {
+        if manifest_sensitive_json_pointer(&default.field)
+            || manifest_sensitive_message(&default.rule)
+        {
+            return false;
+        }
+        redact_json(&mut default.value);
+        true
+    });
+    Some(config)
+}
+
+pub(crate) fn manifest_is_safe(config: &ModelRepositoryConfig) -> bool {
+    !manifest_identity_is_sensitive(config)
+        && config.extra.iter().all(|(key, value)| {
+            !manifest_sensitive_key(key)
+                && !manifest_sensitive_text(key)
+                && manifest_json_is_safe(value)
+        })
+        && config.applied_defaults.iter().all(|default| {
+            !manifest_sensitive_json_pointer(&default.field)
+                && !manifest_sensitive_message(&default.rule)
+                && manifest_json_is_safe(&default.value)
+        })
+}
+
+fn manifest_identity_is_sensitive(config: &ModelRepositoryConfig) -> bool {
+    manifest_sensitive_path(config.source_path())
         || manifest_sensitive_text(config.architecture.as_str())
         || config
             .model_type
@@ -263,27 +418,7 @@ pub(crate) fn manifest_safe(mut config: ModelRepositoryConfig) -> Option<ModelRe
                     .architecture
                     .as_ref()
                     .is_some_and(|architecture| manifest_sensitive_text(architecture.as_str()))
-        });
-    if identity_is_sensitive {
-        return None;
-    }
-    config.extra.retain(|key, value| {
-        if manifest_sensitive_key(key) || manifest_sensitive_text(key) {
-            return false;
-        }
-        redact_json(value);
-        true
-    });
-    config.applied_defaults.retain_mut(|default| {
-        if manifest_sensitive_json_pointer(&default.field)
-            || manifest_sensitive_message(&default.rule)
-        {
-            return false;
-        }
-        redact_json(&mut default.value);
-        true
-    });
-    Some(config)
+        })
 }
 
 pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
@@ -299,7 +434,8 @@ pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
             .next()
             .is_some_and(|authority| authority.contains('@'))
     });
-    let url_query_has_secret = value.contains("://") && manifest_sensitive_url_query(value);
+    let url_parameter_has_secret =
+        value.contains("://") && manifest_sensitive_url_parameters(value);
     value.starts_with(['/', '\\', '~'])
         || lower.starts_with("file://")
         || windows_absolute
@@ -308,7 +444,7 @@ pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
         || lower.contains("bearer ")
         || contains_hf_token(value)
         || authority_has_userinfo
-        || url_query_has_secret
+        || url_parameter_has_secret
 }
 
 pub(crate) fn manifest_sensitive_message(value: &str) -> bool {
@@ -344,32 +480,57 @@ fn contains_hf_token(value: &str) -> bool {
     })
 }
 
-fn manifest_sensitive_url_query(value: &str) -> bool {
-    let Some((_base, query)) = value.split_once('?') else {
-        return false;
-    };
+fn manifest_sensitive_url_parameters(value: &str) -> bool {
+    let query = value
+        .split_once('?')
+        .map(|(_base, query)| query.split('#').next().unwrap_or_default());
+    let fragment = value.split_once('#').map(|(_base, fragment)| fragment);
     query
-        .split('#')
-        .next()
-        .unwrap_or_default()
-        .split(['&', ';'])
+        .into_iter()
+        .chain(fragment)
+        .flat_map(|parameters| parameters.split(['&', ';']))
         .filter_map(|parameter| parameter.split_once('=').map(|(name, _value)| name))
         .any(|name| {
-            let name = name
-                .to_ascii_lowercase()
-                .replace("%2d", "-")
-                .replace("%5f", "_");
-            let compact = name
-                .chars()
-                .filter(char::is_ascii_alphanumeric)
-                .collect::<String>();
-            matches!(compact.as_str(), "key" | "sig" | "sas")
-                || compact.contains("token")
-                || compact.contains("secret")
-                || compact.contains("password")
-                || compact.contains("credential")
-                || compact.contains("signature")
+            compact_percent_decoded_parameter_name(name).is_none_or(|compact| {
+                matches!(compact.as_str(), "key" | "sig" | "sas")
+                    || compact.contains("signature")
+                    || manifest_sensitive_compact_key(&compact)
+            })
         })
+}
+
+fn compact_percent_decoded_parameter_name(name: &str) -> Option<String> {
+    if name.len() > crate::MAX_DIAGNOSTIC_TEXT_BYTES {
+        return None;
+    }
+    let bytes = name.as_bytes();
+    let mut compact = String::with_capacity(name.len());
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        let mut byte = bytes[index];
+        if byte == b'%' && index.saturating_add(2) < bytes.len() {
+            if let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            {
+                byte = high.saturating_mul(16).saturating_add(low);
+                index = index.saturating_add(2);
+            }
+        }
+        if byte.is_ascii_alphanumeric() {
+            compact.push(char::from(byte.to_ascii_lowercase()));
+        }
+        index = index.saturating_add(1);
+    }
+    Some(compact)
+}
+
+const fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 pub(crate) fn manifest_sensitive_json_pointer(value: &str) -> bool {
@@ -385,14 +546,19 @@ pub(crate) fn manifest_sensitive_json_pointer(value: &str) -> bool {
     })
 }
 
-fn manifest_sensitive_key(key: &str) -> bool {
+pub(crate) fn manifest_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
     let compact = key
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect::<String>();
+    manifest_sensitive_compact_key(&compact)
+}
+
+fn manifest_sensitive_compact_key(compact: &str) -> bool {
+    let semantic_key = manifest_semantic_key(compact);
     let safe_special_token = matches!(
-        compact.as_str(),
+        semantic_key,
         "bostoken"
             | "eostoken"
             | "unktoken"
@@ -402,9 +568,9 @@ fn manifest_sensitive_key(key: &str) -> bool {
             | "masktoken"
             | "additionalspecialtokens"
     );
-    matches!(compact.as_str(), "nameorpath" | "chattemplate")
+    matches!(semantic_key, "nameorpath" | "chattemplate")
         || matches!(
-            compact.as_str(),
+            semantic_key,
             "authorization"
                 | "password"
                 | "passwd"
@@ -422,23 +588,48 @@ fn manifest_sensitive_key(key: &str) -> bool {
                 | "secretkey"
                 | "privatekey"
         )
-        || compact.contains("password")
-        || compact.contains("credential")
-        || compact.ends_with("secret")
-        || compact.contains("clientsecret")
-        || compact.contains("secretkey")
-        || compact.contains("privatekey")
-        || compact.contains("apikey")
-        || compact.contains("accesskey")
-        || compact.contains("authtoken")
-        || compact.contains("accesstoken")
-        || compact.contains("apitoken")
-        || compact.contains("hftoken")
-        || (!safe_special_token && compact.ends_with("token"))
+        || semantic_key.contains("password")
+        || semantic_key.contains("credential")
+        || semantic_key.ends_with("secret")
+        || semantic_key.contains("clientsecret")
+        || semantic_key.contains("secretkey")
+        || semantic_key.contains("privatekey")
+        || semantic_key.contains("apikey")
+        || semantic_key.contains("accesskey")
+        || semantic_key.contains("authtoken")
+        || semantic_key.contains("accesstoken")
+        || semantic_key.contains("apitoken")
+        || semantic_key.contains("hftoken")
+        || (!safe_special_token && semantic_key.ends_with("token"))
+}
+
+fn manifest_semantic_key(mut compact: &str) -> &str {
+    loop {
+        let stripped = ["value", "data", "text", "string"]
+            .into_iter()
+            .find_map(|wrapper| compact.strip_suffix(wrapper));
+        match stripped {
+            Some(value) if !value.is_empty() => compact = value,
+            _ => return compact,
+        }
+    }
+}
+
+pub(crate) fn manifest_json_is_safe(value: &Value) -> bool {
+    match value {
+        Value::String(value) => !manifest_sensitive_message(value),
+        Value::Array(values) => values.iter().all(manifest_json_is_safe),
+        Value::Object(object) => object.iter().all(|(key, value)| {
+            !manifest_sensitive_key(key)
+                && !manifest_sensitive_message(key)
+                && manifest_json_is_safe(value)
+        }),
+        Value::Null | Value::Bool(_) | Value::Number(_) => true,
+    }
 }
 
 fn redact_string(value: &mut String) {
-    if manifest_sensitive_text(value) {
+    if manifest_sensitive_message(value) {
         value.clear();
         value.push_str("<redacted>");
     }
@@ -453,7 +644,7 @@ fn redact_json(value: &mut Value) {
             }
         }
         Value::Object(object) => object.retain(|key, value| {
-            if manifest_sensitive_key(key) || manifest_sensitive_text(key) {
+            if manifest_sensitive_key(key) || manifest_sensitive_message(key) {
                 return false;
             }
             redact_json(value);

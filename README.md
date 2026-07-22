@@ -37,7 +37,8 @@ Malformed JSON, duplicate keys, invalid UTF-8, wrong field shapes, unsafe paths,
 and missing internal references remain inspectable through exact bytes and
 structured diagnostics. Unknown fields are never discarded from source views.
 Construction is explicitly bounded per document, across retained repository
-source bytes, by recognized-document count, and by inventory size.
+source bytes, by JSON nesting depth, recognized-document count, inventory size,
+diagnostic retention, portable path length, and serialized manifest size.
 
 ## Usage
 
@@ -106,11 +107,14 @@ findings.
 The MSRV is Rust 1.85.
 
 ```text
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo test --workspace --all-features --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+cargo +stable fmt --all --check
+cargo +stable clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo +stable test --workspace --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo +stable doc --workspace --all-features --no-deps --locked
+cargo +1.85.0 fmt --all --check
+cargo +1.85.0 clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo +1.85.0 test --workspace --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo +1.85.0 doc --workspace --all-features --no-deps --locked
 python -B -m unittest discover -s tools -p "test_*.py" -v
 ```
 

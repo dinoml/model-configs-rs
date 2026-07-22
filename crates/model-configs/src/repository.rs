@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use unicode_casefold::UnicodeCaseFold;
@@ -111,7 +112,6 @@ impl RepositoryInventory {
 }
 
 /// Parsed configuration documents from one local model repository snapshot.
-#[derive(Debug)]
 pub struct ModelRepository {
     root: PathBuf,
     documents: Vec<SourceDocument>,
@@ -119,6 +119,19 @@ pub struct ModelRepository {
     files: Vec<String>,
     directories: Vec<String>,
     scan_diagnostics: Vec<Diagnostic>,
+}
+
+impl fmt::Debug for ModelRepository {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ModelRepository")
+            .field("document_count", &self.documents.len())
+            .field("inventoried_file_count", &self.files.len())
+            .field("inventoried_directory_count", &self.directories.len())
+            .field("scan_diagnostic_count", &self.scan_diagnostics.len())
+            .field("has_filesystem_root", &!self.root.as_os_str().is_empty())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ModelRepository {
@@ -294,14 +307,7 @@ impl ModelRepository {
     /// Validates paths, component configs, checkpoint shards, and processor links.
     #[must_use]
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
-        let mut diagnostics = validate_repository(self);
-        for diagnostic in &self.scan_diagnostics {
-            if !crate::diagnostic::push_bounded(&mut diagnostics, diagnostic.clone()) {
-                break;
-            }
-        }
-        crate::diagnostic::sort_diagnostics(&mut diagnostics);
-        diagnostics
+        merge_diagnostics(validate_repository(self), &self.scan_diagnostics)
     }
 
     /// Builds a deterministic compatibility manifest for this snapshot.
@@ -334,6 +340,42 @@ impl ModelRepository {
     pub(crate) fn has_entry(&self, relative_path: &Path) -> bool {
         self.has_file(relative_path) || self.has_directory(relative_path)
     }
+}
+
+fn merge_diagnostics(content: Vec<Diagnostic>, scan: &[Diagnostic]) -> Vec<Diagnostic> {
+    const SCAN_RESERVE: usize = crate::MAX_REPOSITORY_DIAGNOSTICS / 4;
+    let content_had_limit = content
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagnosticCode::DiagnosticLimitReached);
+    let scan_had_limit = scan
+        .iter()
+        .any(|diagnostic| diagnostic.code == DiagnosticCode::DiagnosticLimitReached);
+    let content = content
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != DiagnosticCode::DiagnosticLimitReached)
+        .collect::<Vec<_>>();
+    let scan = scan
+        .iter()
+        .filter(|diagnostic| diagnostic.code != DiagnosticCode::DiagnosticLimitReached)
+        .cloned()
+        .collect::<Vec<_>>();
+    let finding_limit = crate::MAX_REPOSITORY_DIAGNOSTICS - 1;
+    let scan_reserve = scan.len().min(SCAN_RESERVE);
+    let content_take = content.len().min(finding_limit - scan_reserve);
+    let scan_take = scan.len().min(finding_limit - content_take);
+    let truncated = content_had_limit
+        || scan_had_limit
+        || content_take < content.len()
+        || scan_take < scan.len();
+
+    let mut diagnostics = Vec::with_capacity(content_take + scan_take + usize::from(truncated));
+    diagnostics.extend(content.into_iter().take(content_take));
+    diagnostics.extend(scan.into_iter().take(scan_take));
+    if truncated {
+        diagnostics.push(crate::diagnostic::limit_diagnostic());
+    }
+    crate::diagnostic::sort_diagnostics(&mut diagnostics);
+    diagnostics
 }
 
 impl RepositoryInventory {
@@ -434,7 +476,7 @@ fn collect_paths(
             path: path.clone(),
             source,
         })?;
-        if is_link_like(&path, file_type) {
+        if is_link_like(&path, file_type)? {
             let related_path = portable_relative_path(root, &path)?;
             let mut diagnostic = Diagnostic::warning(
                 DiagnosticCode::SymlinkSkipped,
@@ -530,22 +572,25 @@ fn is_excluded_metadata_name(name: &std::ffi::OsStr) -> bool {
         .any(|excluded| name == *excluded)
 }
 
-fn is_link_like(path: &Path, file_type: std::fs::FileType) -> bool {
+fn is_link_like(path: &Path, file_type: std::fs::FileType) -> Result<bool, ConfigError> {
     if file_type.is_symlink() {
-        return true;
+        return Ok(true);
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
 
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        std::fs::symlink_metadata(path)
-            .is_ok_and(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        let metadata = std::fs::symlink_metadata(path).map_err(|source| ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
     }
     #[cfg(not(windows))]
     {
         let _ = path;
-        false
+        Ok(false)
     }
 }
 
@@ -562,6 +607,38 @@ mod tests {
             check_document_resource_limits(documents),
             Err(ConfigError::RepositoryDocumentLimit { .. })
         ));
+    }
+
+    #[test]
+    fn scan_warning_saturation_reserves_content_error_capacity() {
+        let content = vec![Diagnostic::error(
+            DiagnosticCode::MissingArchitecture,
+            "missing architecture",
+        )];
+        let scan = std::iter::repeat_with(|| {
+            Diagnostic::warning(DiagnosticCode::SymlinkSkipped, "skipped link")
+        })
+        .take(crate::MAX_REPOSITORY_DIAGNOSTICS)
+        .collect::<Vec<_>>();
+
+        let diagnostics = merge_diagnostics(content, &scan);
+
+        assert_eq!(diagnostics.len(), crate::MAX_REPOSITORY_DIAGNOSTICS);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingArchitecture)
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::SymlinkSkipped)
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::DiagnosticLimitReached)
+        );
     }
 
     #[test]

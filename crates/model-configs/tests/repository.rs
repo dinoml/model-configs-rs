@@ -520,6 +520,40 @@ fn filesystem_scan_skips_file_and_directory_symlinks_with_relative_diagnostics()
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn filesystem_scan_diagnostics_survive_content_diagnostic_saturation()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(root.path().join("config.json"), r#"{"model_type":"root"}"#)?;
+    let invalid_tokens =
+        vec![serde_json::Value::Bool(false); model_configs::MAX_REPOSITORY_DIAGNOSTICS + 8];
+    fs::write(
+        root.path().join("tokenizer_config.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "additional_special_tokens": invalid_tokens
+        }))?,
+    )?;
+    symlink(outside.path(), root.path().join("linked-component"))?;
+
+    let diagnostics = ModelRepository::read(root.path())?.diagnostics();
+    assert_eq!(diagnostics.len(), model_configs::MAX_REPOSITORY_DIAGNOSTICS);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::SymlinkSkipped)
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::DiagnosticLimitReached)
+    );
+    Ok(())
+}
+
 #[test]
 fn large_component_repository_keeps_reference_validation_indexed()
 -> Result<(), Box<dyn std::error::Error>> {

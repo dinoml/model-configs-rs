@@ -274,6 +274,17 @@ repository, and 250,000 inventoried files plus directories. The public constants
 are part of the resource contract; raising them is compatible, while lowering
 them requires a new normalization/compatibility review.
 
+Portable logical paths are limited to 1,024 UTF-8 bytes in total and 255 bytes
+per segment. Strict JSON nesting is limited to 120 arrays or objects so an
+accepted source remains safely representable inside its manifest wrapper.
+Duplicate-key evidence retains at most 1,024 locations and 1 MiB of location
+text per source document. Repository validation returns at most 4,096
+diagnostics, with at most 4,096 bytes retained for each message or structured
+location. A serialized compatibility manifest is limited to 256 MiB, including
+pretty-print whitespace. Exceeding any limit produces an explicit operation
+error or a stable truncation diagnostic; it never silently returns a partial
+typed value.
+
 ### Unknown-field preservation
 
 Typed access is additive over the generic document. It never deletes a key from
@@ -660,10 +671,13 @@ code execution. It is never an opt-in switch in this crate. Even a caller that
 trusts the repository must hand executable work to a different, explicitly
 authorized subsystem.
 
-Debug output for public types is safe configuration metadata but may include
-model identifiers and source values; it must not include file contents unless
-the API explicitly documents that representation. Compatibility manifests do
-not embed chat-template text or whole source documents.
+Debug output for public types is metadata-only. It may report kinds, counts,
+presence flags, byte lengths, and portable source locations, but it does not
+render exact JSON values, normalized unknown-field values, diagnostic prose,
+chat-template text, file contents, or absolute repository roots. Callers use
+the explicit lossless/source-value accessors when that sensitive detail is
+required. Compatibility manifests likewise do not embed chat-template text or
+whole source documents.
 
 ## Compatibility policy
 

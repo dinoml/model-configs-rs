@@ -1,7 +1,8 @@
+use std::fmt;
 use std::path::PathBuf;
 
 /// An operation-level error constructing model repository configuration.
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigError {
     /// A configuration file could not be read.
@@ -38,6 +39,18 @@ pub enum ConfigError {
         size: u64,
         /// Maximum accepted source byte length.
         limit: u64,
+    },
+    /// A JSON source exceeded the nesting reserved for manifest round trips.
+    #[error(
+        "configuration document {path} has JSON nesting depth {depth}, exceeding the {limit}-container limit"
+    )]
+    SourceJsonNestingLimit {
+        /// Repository-relative source path.
+        path: PathBuf,
+        /// Observed maximum array/object nesting depth.
+        depth: usize,
+        /// Maximum accepted array/object nesting depth.
+        limit: usize,
     },
     /// A repository inventory exceeded the bounded discovery limit.
     #[error("repository {root} contains more than {limit} filesystem entries")]
@@ -88,8 +101,29 @@ pub enum ConfigError {
     ManifestSensitivePath,
 }
 
+impl fmt::Debug for ConfigError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::Read { .. } => "Read",
+            Self::Json { .. } => "Json",
+            Self::UnsafePath(_) => "UnsafePath",
+            Self::UnsupportedDocument(_) => "UnsupportedDocument",
+            Self::NonUtf8Path(_) => "NonUtf8Path",
+            Self::SourceTooLarge { .. } => "SourceTooLarge",
+            Self::SourceJsonNestingLimit { .. } => "SourceJsonNestingLimit",
+            Self::RepositoryEntryLimit { .. } => "RepositoryEntryLimit",
+            Self::RepositoryDocumentLimit { .. } => "RepositoryDocumentLimit",
+            Self::RepositorySourceBytesLimit { .. } => "RepositorySourceBytesLimit",
+            Self::DuplicateDocumentPath(_) => "DuplicateDocumentPath",
+            Self::NonPortablePathCollision { .. } => "NonPortablePathCollision",
+            Self::ManifestSensitivePath => "ManifestSensitivePath",
+        };
+        redacted_error_debug(formatter, variant)
+    }
+}
+
 /// A content-level error selecting an inert chat template.
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum ChatTemplateError {
     /// A standalone chat template exists but is not valid UTF-8.
@@ -102,8 +136,17 @@ pub enum ChatTemplateError {
     },
 }
 
+impl fmt::Debug for ChatTemplateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::InvalidUtf8 { .. } => "InvalidUtf8",
+        };
+        redacted_error_debug(formatter, variant)
+    }
+}
+
 /// An operation-level error selecting configuration within a repository scope.
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum SelectionError {
     /// The requested repository scope is not a safe portable relative path.
@@ -114,11 +157,21 @@ pub enum SelectionError {
     ChatTemplate(#[from] ChatTemplateError),
 }
 
+impl fmt::Debug for SelectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::Config(_) => "Config",
+            Self::ChatTemplate(_) => "ChatTemplate",
+        };
+        redacted_error_debug(formatter, variant)
+    }
+}
+
 /// A content-level reason that a normalized repository view is unavailable.
 ///
 /// Source bytes and source-local views remain inspectable when this error is
 /// returned. Filesystem, path, and resource failures use [`ConfigError`].
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Eq, PartialEq, thiserror::Error)]
 #[non_exhaustive]
 pub enum NormalizationError {
     /// A recognized JSON document did not contain an object at its root.
@@ -133,4 +186,20 @@ pub enum NormalizationError {
     /// A document contains duplicate JSON object keys and cannot be normalized.
     #[error("configuration document {0} contains duplicate JSON object keys")]
     DuplicateKeys(PathBuf),
+}
+
+impl fmt::Debug for NormalizationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::ExpectedObject(_) => "ExpectedObject",
+            Self::MissingRootConfig => "MissingRootConfig",
+            Self::MissingArchitecture(_) => "MissingArchitecture",
+            Self::DuplicateKeys(_) => "DuplicateKeys",
+        };
+        redacted_error_debug(formatter, variant)
+    }
+}
+
+fn redacted_error_debug(formatter: &mut fmt::Formatter<'_>, variant: &str) -> fmt::Result {
+    formatter.debug_struct(variant).finish_non_exhaustive()
 }

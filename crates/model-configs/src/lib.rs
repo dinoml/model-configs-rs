@@ -21,12 +21,12 @@ pub use diagnostic::{
 };
 pub use document::{
     DocumentKind, JsonError, JsonErrorCategory, MAX_DUPLICATE_KEY_LOCATION_BYTES,
-    MAX_DUPLICATE_KEY_LOCATIONS, MAX_SOURCE_DOCUMENT_BYTES, SourceDocument,
+    MAX_DUPLICATE_KEY_LOCATIONS, MAX_SOURCE_DOCUMENT_BYTES, MAX_SOURCE_JSON_DEPTH, SourceDocument,
 };
 pub use error::{ChatTemplateError, ConfigError, NormalizationError, SelectionError};
 pub use manifest::{
     CompatibilityManifest, MANIFEST_SCHEMA_VERSION, MAX_COMPATIBILITY_MANIFEST_BYTES,
-    ManifestDocument, ManifestReadError,
+    ManifestDocument, ManifestReadError, ManifestWriteError,
 };
 pub use normalize::{
     AppliedDefault, ArchitectureId, ArchitectureSource, ComponentReference, ModelRepositoryConfig,

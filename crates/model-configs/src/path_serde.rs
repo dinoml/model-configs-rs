@@ -1,8 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
-use serde::de::Error as _;
 use serde::ser::Error as _;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Serialize, Serializer};
 
 /// Maximum UTF-8 bytes in one portable repository-relative path.
 pub const MAX_REPOSITORY_PATH_BYTES: usize = 1_024;
@@ -34,29 +33,6 @@ where
         })
         .transpose()?;
     portable.serialize(serializer)
-}
-
-pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<PathBuf, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = String::deserialize(deserializer)?;
-    let path = PathBuf::from(value);
-    validate(&path).map_err(D::Error::custom)?;
-    Ok(path)
-}
-
-pub(crate) fn deserialize_option<'de, D>(deserializer: D) -> Result<Option<PathBuf>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Option::<String>::deserialize(deserializer)?;
-    value
-        .map(|value| {
-            let path = PathBuf::from(value);
-            validate(&path).map(|()| path).map_err(D::Error::custom)
-        })
-        .transpose()
 }
 
 pub(crate) fn portable(path: &Path) -> String {

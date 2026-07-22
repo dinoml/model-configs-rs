@@ -14,6 +14,13 @@ use crate::ConfigError;
 /// content while remaining far above representative configuration sizes.
 pub const MAX_SOURCE_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum JSON container nesting retained as a typed source projection.
+///
+/// The gap below `serde_json`'s parser limit reserves enough nesting for the
+/// compatibility-manifest envelope, so every typed source projection can be
+/// serialized and decoded again as manifest schema 1.
+pub const MAX_SOURCE_JSON_DEPTH: usize = 120;
+
 /// Maximum retained duplicate-key locations for one source document.
 pub const MAX_DUPLICATE_KEY_LOCATIONS: usize = 1_024;
 
@@ -35,7 +42,7 @@ pub enum JsonErrorCategory {
 }
 
 /// Cloneable structural error retained alongside exact source bytes.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub struct JsonError {
     /// Human-readable parser message.
     pub message: String,
@@ -45,6 +52,18 @@ pub struct JsonError {
     pub column: usize,
     /// Broad stable error category.
     pub category: JsonErrorCategory,
+}
+
+impl fmt::Debug for JsonError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JsonError")
+            .field("category", &self.category)
+            .field("line", &self.line)
+            .field("column", &self.column)
+            .field("message_byte_len", &self.message.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl JsonError {
@@ -169,7 +188,8 @@ impl SourceDocument {
     ///
     /// Returns [`ConfigError::UnsafePath`] when `relative_path` is absolute or
     /// traverses a parent, and [`ConfigError::UnsupportedDocument`] when its
-    /// filename is not supported. Malformed JSON is retained and exposed through
+    /// filename is not supported. Oversized or excessively nested sources return
+    /// a resource error. Other malformed JSON is retained and exposed through
     /// [`SourceDocument::json_error`].
     pub fn parse(
         relative_path: impl AsRef<Path>,
@@ -214,6 +234,14 @@ impl SourceDocument {
         let kind = DocumentKind::from_path(&relative_path)
             .ok_or_else(|| ConfigError::UnsupportedDocument(relative_path.clone()))?;
         let (json, json_error, duplicate_keys, duplicate_keys_truncated) = if kind.is_json() {
+            let nesting_depth = json_nesting_depth(&original);
+            if nesting_depth > MAX_SOURCE_JSON_DEPTH {
+                return Err(ConfigError::SourceJsonNestingLimit {
+                    path: relative_path,
+                    depth: nesting_depth,
+                    limit: MAX_SOURCE_JSON_DEPTH,
+                });
+            }
             match serde_json::from_slice(&original) {
                 Ok(json) => {
                     let duplicate_scan =
@@ -381,6 +409,35 @@ impl SourceDocument {
         }
         output
     }
+}
+
+fn json_nesting_depth(source: &[u8]) -> usize {
+    let mut depth = 0_usize;
+    let mut maximum = 0_usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in source {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if *byte == b'\\' {
+                escaped = true;
+            } else if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'{' | b'[' => {
+                depth = depth.saturating_add(1);
+                maximum = maximum.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    maximum
 }
 
 fn validate_document_path(path: &Path) -> Result<(), ConfigError> {

@@ -6,6 +6,7 @@ use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 pub(crate) struct DuplicateScan {
     pub(crate) pointers: Vec<String>,
     pub(crate) truncated: bool,
+    pub(crate) sensitive: bool,
 }
 
 pub(crate) fn duplicate_keys(source: &[u8]) -> Result<DuplicateScan, serde_json::Error> {
@@ -13,6 +14,7 @@ pub(crate) fn duplicate_keys(source: &[u8]) -> Result<DuplicateScan, serde_json:
         scan: DuplicateScan {
             pointers: Vec::new(),
             truncated: false,
+            sensitive: false,
         },
         retained_bytes: 0,
     };
@@ -32,6 +34,20 @@ struct DuplicateState {
 }
 
 impl DuplicateState {
+    fn observe_key(&mut self, key: &str) {
+        self.scan.sensitive |= crate::normalize::manifest_sensitive_key(key)
+            || crate::normalize::manifest_sensitive_message(key);
+    }
+
+    fn observe_text(&mut self, path: Option<&str>, value: &str) {
+        let pointer_value = path.is_some_and(is_manifest_json_pointer_value);
+        self.scan.sensitive |= if pointer_value {
+            crate::normalize::manifest_sensitive_json_pointer(value)
+        } else {
+            crate::normalize::manifest_sensitive_message(value)
+        };
+    }
+
     fn record(&mut self, path: Option<&str>) {
         let Some(path) = path else {
             self.scan.truncated = true;
@@ -88,11 +104,13 @@ impl<'de> Visitor<'de> for DuplicateSeed<'_> {
         Ok(())
     }
 
-    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        self.state.observe_text(self.path.as_deref(), value);
         Ok(())
     }
 
-    fn visit_string<E>(self, _value: String) -> Result<Self::Value, E> {
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        self.state.observe_text(self.path.as_deref(), &value);
         Ok(())
     }
 
@@ -138,6 +156,7 @@ impl<'de> Visitor<'de> for DuplicateSeed<'_> {
     {
         let mut keys = BTreeSet::new();
         while let Some(key) = map.next_key::<String>()? {
+            self.state.observe_key(&key);
             let path = bounded_child(self.path.as_deref(), &key);
             if !keys.insert(key) {
                 self.state.record(path.as_deref());
@@ -149,6 +168,22 @@ impl<'de> Visitor<'de> for DuplicateSeed<'_> {
         }
         Ok(())
     }
+}
+
+fn is_manifest_json_pointer_value(path: &str) -> bool {
+    let diagnostic_pointer = path
+        .strip_prefix("/diagnostics/")
+        .and_then(|suffix| suffix.split_once('/'))
+        .is_some_and(|(index, field)| is_array_index(index) && field == "json_path");
+    let default_field = path
+        .strip_prefix("/normalized/applied_defaults/")
+        .and_then(|suffix| suffix.split_once('/'))
+        .is_some_and(|(index, field)| is_array_index(index) && field == "field");
+    diagnostic_pointer || default_field
+}
+
+fn is_array_index(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn bounded_child(parent: Option<&str>, key: &str) -> Option<String> {
