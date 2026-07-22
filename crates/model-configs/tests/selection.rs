@@ -29,6 +29,37 @@ fn dedicated_generation_config_blocks_legacy_merge() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn pinned_generation_config_fields_select_legacy_model_configs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fields = [
+        "encoder_repetition_penalty",
+        "encoder_no_repeat_ngram_size",
+        "output_scores",
+        "return_dict_in_generate",
+        "num_assistant_tokens",
+        "num_assistant_tokens_schedule",
+        "assistant_confidence_threshold",
+        "assistant_lookbehind",
+        "target_lookbehind",
+        "cache_config",
+        "compile_config",
+        "continuous_batching_config",
+        "prefill_chunk_size",
+    ];
+
+    for field in fields {
+        let source = format!(r#"{{"{field}":null}}"#);
+        let document = model_configs::SourceDocument::parse("config.json", source.as_bytes())?;
+        let repository = ModelRepository::from_documents(vec![document])?;
+        assert!(
+            repository.generation_source().is_some(),
+            "{field} must select the pinned legacy generation view"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn standalone_chat_template_wins_over_inline_template() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     fs::write(temp.path().join("config.json"), r#"{"model_type":"bert"}"#)?;

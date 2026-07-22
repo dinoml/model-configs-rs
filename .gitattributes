@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Conformance fixtures are exact attributed byte sequences.
+crates/model-configs/tests/fixtures/** -text

@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use crate::{DocumentKind, SourceDocument};
 
 /// A source field interpreted without discarding its original state.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum SourceField<'a, T> {
     /// The source object does not contain the field.
@@ -25,6 +25,20 @@ pub enum SourceField<'a, T> {
     Value(T),
     /// The source field exists but has an unexpected JSON shape.
     Invalid(&'a Value),
+}
+
+impl<T> fmt::Debug for SourceField<'_, T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Missing => formatter.write_str("Missing"),
+            Self::Null => formatter.write_str("Null"),
+            Self::Value(_) => formatter.write_str("Value(..)"),
+            Self::Invalid(value) => formatter
+                .debug_tuple("Invalid")
+                .field(&JsonSummary(value))
+                .finish(),
+        }
+    }
 }
 
 impl<T> SourceField<'_, T> {
@@ -58,7 +72,7 @@ impl<T> SourceField<'_, T> {
 }
 
 /// An error constructing a format-specific document view.
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum ViewError {
     /// A recognized JSON document did not contain an object at its root.
@@ -79,7 +93,17 @@ pub enum ViewError {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+impl fmt::Debug for ViewError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::ExpectedObject { .. } => "ExpectedObject",
+            Self::DuplicateKeys { .. } => "DuplicateKeys",
+        };
+        formatter.debug_struct(variant).finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Copy)]
 struct ObjectView<'a> {
     source: &'a SourceDocument,
     object: &'a Map<String, Value>,
@@ -101,6 +125,46 @@ impl<'a> ObjectView<'a> {
         };
         Ok(Self { source, object })
     }
+
+    fn fmt_as(&self, name: &str, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct(name)
+            .field("source_path", &self.source.relative_path())
+            .field("document_kind", self.source.kind())
+            .field("field_count", &self.object.len())
+            .finish_non_exhaustive()
+    }
+}
+
+struct JsonSummary<'a>(&'a Value);
+
+impl fmt::Debug for JsonSummary<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("JsonValue")
+            .field("json_type", &json_type(self.0))
+            .field("child_count", &json_child_count(self.0))
+            .finish_non_exhaustive()
+    }
+}
+
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn json_child_count(value: &Value) -> Option<usize> {
+    match value {
+        Value::Array(values) => Some(values.len()),
+        Value::Object(object) => Some(object.len()),
+        _ => None,
+    }
 }
 
 /// Iterator over fields not interpreted by a particular typed view.
@@ -113,6 +177,7 @@ impl fmt::Debug for ExtraFields<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ExtraFields")
+            .field("remaining_source_field_count", &self.fields.len())
             .finish_non_exhaustive()
     }
 }
@@ -143,7 +208,7 @@ fn raw_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a, &
 }
 
 /// A source special-token value in its string or structured added-token form.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum SpecialTokenValue<'a> {
     /// Plain token text.
@@ -154,10 +219,35 @@ pub enum SpecialTokenValue<'a> {
     Invalid(&'a Value),
 }
 
+impl fmt::Debug for SpecialTokenValue<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(value) => formatter
+                .debug_struct("String")
+                .field("byte_len", &value.len())
+                .finish_non_exhaustive(),
+            Self::AddedToken(value) => formatter.debug_tuple("AddedToken").field(value).finish(),
+            Self::Invalid(value) => formatter
+                .debug_tuple("Invalid")
+                .field(&JsonSummary(value))
+                .finish(),
+        }
+    }
+}
+
 /// Borrowed structured added-token metadata.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct AddedTokenView<'a> {
     object: &'a Map<String, Value>,
+}
+
+impl fmt::Debug for AddedTokenView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AddedTokenView")
+            .field("field_count", &self.object.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> AddedTokenView<'a> {
@@ -205,9 +295,18 @@ impl<'a> AddedTokenView<'a> {
 }
 
 /// Iterator over a source array of special-token values.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SpecialTokenValues<'a> {
     values: std::slice::Iter<'a, Value>,
+}
+
+impl fmt::Debug for SpecialTokenValues<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SpecialTokenValues")
+            .field("remaining_value_count", &self.values.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> Iterator for SpecialTokenValues<'a> {
@@ -225,9 +324,18 @@ impl<'a> Iterator for SpecialTokenValues<'a> {
 impl ExactSizeIterator for SpecialTokenValues<'_> {}
 
 /// Iterator over `added_tokens_decoder` source entries.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AddedTokenDecoderEntries<'a> {
     entries: serde_json::map::Iter<'a>,
+}
+
+impl fmt::Debug for AddedTokenDecoderEntries<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AddedTokenDecoderEntries")
+            .field("remaining_entry_count", &self.entries.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> Iterator for AddedTokenDecoderEntries<'a> {
@@ -305,6 +413,18 @@ fn string_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a
     }
 }
 
+fn object_field<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> SourceField<'a, &'a Map<String, Value>> {
+    match object.get(key) {
+        None => SourceField::Missing,
+        Some(Value::Null) => SourceField::Null,
+        Some(Value::Object(value)) => SourceField::Value(value),
+        Some(value) => SourceField::Invalid(value),
+    }
+}
+
 fn bool_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a, bool> {
     match object.get(key) {
         None => SourceField::Missing,
@@ -347,9 +467,15 @@ fn f64_field<'a>(object: &'a Map<String, Value>, key: &str) -> SourceField<'a, f
 macro_rules! json_view {
     ($(#[$meta:meta])* $name:ident, [$($known:literal),* $(,)?]) => {
         $(#[$meta])*
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy)]
         pub struct $name<'a> {
             inner: ObjectView<'a>,
+        }
+
+        impl fmt::Debug for $name<'_> {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.inner.fmt_as(stringify!($name), formatter)
+            }
         }
 
         impl<'a> $name<'a> {
@@ -489,6 +615,7 @@ json_view!(
     [
         "_name_or_path",
         "_class_name",
+        "_diffusers_version",
         "architectures",
         "model_type",
         "transformers_version",
@@ -503,7 +630,14 @@ json_view!(
         "pad_token_id",
         "decoder_start_token_id",
         "is_encoder_decoder",
+        "audio_config",
+        "decoder",
+        "decoder_config",
+        "encoder",
+        "encoder_config",
         "quantization_config",
+        "text_config",
+        "vision_config",
     ]
 );
 
@@ -551,6 +685,12 @@ impl<'a> ConfigView<'a> {
     #[must_use]
     pub fn transformers_version(&self) -> SourceField<'a, &'a str> {
         string_field(self.raw(), "transformers_version")
+    }
+
+    /// Returns the Diffusers version recorded by a component configuration.
+    #[must_use]
+    pub fn diffusers_version(&self) -> SourceField<'a, &'a str> {
+        string_field(self.raw(), "_diffusers_version")
     }
 
     /// Returns the explicit pipeline tag.
@@ -619,10 +759,60 @@ impl<'a> ConfigView<'a> {
         bool_field(self.raw(), "is_encoder_decoder")
     }
 
-    /// Returns the unmodified nested quantization configuration.
+    /// Interprets an arbitrary source field as a nested configuration object.
+    ///
+    /// This does not execute or instantiate the class named by that object.
     #[must_use]
-    pub fn quantization_config(&self) -> SourceField<'a, &'a Value> {
-        raw_field(self.raw(), "quantization_config")
+    pub fn nested_config(&self, name: &str) -> SourceField<'a, &'a Map<String, Value>> {
+        object_field(self.raw(), name)
+    }
+
+    /// Returns the nested text configuration.
+    #[must_use]
+    pub fn text_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("text_config")
+    }
+
+    /// Returns the nested vision configuration.
+    #[must_use]
+    pub fn vision_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("vision_config")
+    }
+
+    /// Returns the nested audio configuration.
+    #[must_use]
+    pub fn audio_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("audio_config")
+    }
+
+    /// Returns an inline nested encoder configuration.
+    #[must_use]
+    pub fn encoder(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("encoder")
+    }
+
+    /// Returns a named nested encoder configuration.
+    #[must_use]
+    pub fn encoder_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("encoder_config")
+    }
+
+    /// Returns an inline nested decoder configuration.
+    #[must_use]
+    pub fn decoder(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("decoder")
+    }
+
+    /// Returns a named nested decoder configuration.
+    #[must_use]
+    pub fn decoder_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("decoder_config")
+    }
+
+    /// Returns the nested quantization configuration.
+    #[must_use]
+    pub fn quantization_config(&self) -> SourceField<'a, &'a Map<String, Value>> {
+        self.nested_config("quantization_config")
     }
 }
 
@@ -631,35 +821,88 @@ json_view!(
     GenerationConfigView,
     [
         "_from_model_config",
+        "assistant_confidence_threshold",
+        "assistant_early_exit",
+        "assistant_lookbehind",
+        "bad_words_ids",
+        "begin_suppress_tokens",
+        "bos_token_id",
+        "cache_config",
+        "cache_implementation",
+        "compile_config",
+        "constraints",
+        "continuous_batching_config",
+        "decoder_start_token_id",
+        "disable_compile",
+        "diversity_penalty",
+        "do_sample",
+        "dola_layers",
+        "early_stopping",
+        "encoder_no_repeat_ngram_size",
+        "encoder_repetition_penalty",
+        "eos_token_id",
+        "epsilon_cutoff",
+        "eta_cutoff",
+        "exponential_decay_length_penalty",
+        "force_words_ids",
+        "forced_bos_token_id",
+        "forced_decoder_ids",
+        "forced_eos_token_id",
+        "guidance_scale",
+        "is_assistant",
+        "length_penalty",
+        "low_memory",
         "transformers_version",
         "max_length",
+        "max_matching_ngram_size",
         "max_new_tokens",
+        "max_time",
         "min_length",
         "min_new_tokens",
-        "do_sample",
+        "min_p",
+        "no_repeat_ngram_size",
+        "num_assistant_tokens",
+        "num_assistant_tokens_schedule",
+        "num_beam_groups",
         "num_beams",
+        "num_return_sequences",
+        "output_attentions",
+        "output_hidden_states",
+        "output_logits",
+        "output_scores",
+        "pad_token_id",
+        "penalty_alpha",
+        "prefill_chunk_size",
+        "prompt_lookup_num_tokens",
+        "remove_invalid_values",
+        "renormalize_logits",
+        "repetition_penalty",
+        "return_dict_in_generate",
+        "sequence_bias",
+        "stop_strings",
+        "suppress_tokens",
+        "target_lookbehind",
         "temperature",
+        "token_healing",
+        "top_h",
         "top_k",
         "top_p",
         "typical_p",
-        "repetition_penalty",
-        "length_penalty",
-        "no_repeat_ngram_size",
-        "early_stopping",
         "use_cache",
-        "bos_token_id",
-        "eos_token_id",
-        "pad_token_id",
-        "decoder_start_token_id",
-        "bad_words_ids",
-        "forced_bos_token_id",
-        "forced_eos_token_id",
-        "stop_strings",
-        "cache_implementation",
+        "watermarking_config",
     ]
 );
 
 impl<'a> GenerationConfigView<'a> {
+    /// Returns an unmodified pinned generation parameter by name.
+    ///
+    /// This preserves polymorphic and future-compatible parameter values while
+    /// dedicated accessors provide stronger types for common fields.
+    #[must_use]
+    pub fn parameter(&self, name: &str) -> SourceField<'a, &'a Value> {
+        raw_field(self.raw(), name)
+    }
+
     /// Returns whether the file originated from a model configuration.
     #[must_use]
     pub fn from_model_config(&self) -> SourceField<'a, bool> {
@@ -716,8 +959,8 @@ impl<'a> GenerationConfigView<'a> {
 
     /// Returns the top-k sampling limit.
     #[must_use]
-    pub fn top_k(&self) -> SourceField<'a, u64> {
-        u64_field(self.raw(), "top_k")
+    pub fn top_k(&self) -> SourceField<'a, i64> {
+        i64_field(self.raw(), "top_k")
     }
 
     /// Returns the top-p sampling threshold.
@@ -738,6 +981,12 @@ impl<'a> GenerationConfigView<'a> {
         f64_field(self.raw(), "repetition_penalty")
     }
 
+    /// Returns the encoder-side repetition penalty.
+    #[must_use]
+    pub fn encoder_repetition_penalty(&self) -> SourceField<'a, f64> {
+        f64_field(self.raw(), "encoder_repetition_penalty")
+    }
+
     /// Returns the beam-search length penalty.
     #[must_use]
     pub fn length_penalty(&self) -> SourceField<'a, f64> {
@@ -748,6 +997,12 @@ impl<'a> GenerationConfigView<'a> {
     #[must_use]
     pub fn no_repeat_ngram_size(&self) -> SourceField<'a, u64> {
         u64_field(self.raw(), "no_repeat_ngram_size")
+    }
+
+    /// Returns the encoder-side no-repeat n-gram size.
+    #[must_use]
+    pub fn encoder_no_repeat_ngram_size(&self) -> SourceField<'a, u64> {
+        u64_field(self.raw(), "encoder_no_repeat_ngram_size")
     }
 
     /// Returns the unmodified polymorphic early-stopping setting.
@@ -814,6 +1069,48 @@ impl<'a> GenerationConfigView<'a> {
     #[must_use]
     pub fn cache_implementation(&self) -> SourceField<'a, &'a str> {
         string_field(self.raw(), "cache_implementation")
+    }
+
+    /// Returns whether generation retains processed prediction scores.
+    #[must_use]
+    pub fn output_scores(&self) -> SourceField<'a, bool> {
+        bool_field(self.raw(), "output_scores")
+    }
+
+    /// Returns whether generation produces a structured output.
+    #[must_use]
+    pub fn return_dict_in_generate(&self) -> SourceField<'a, bool> {
+        bool_field(self.raw(), "return_dict_in_generate")
+    }
+
+    /// Returns the speculative assistant token budget.
+    #[must_use]
+    pub fn num_assistant_tokens(&self) -> SourceField<'a, u64> {
+        u64_field(self.raw(), "num_assistant_tokens")
+    }
+
+    /// Returns the speculative assistant token schedule.
+    #[must_use]
+    pub fn num_assistant_tokens_schedule(&self) -> SourceField<'a, &'a str> {
+        string_field(self.raw(), "num_assistant_tokens_schedule")
+    }
+
+    /// Returns the speculative assistant confidence threshold.
+    #[must_use]
+    pub fn assistant_confidence_threshold(&self) -> SourceField<'a, f64> {
+        f64_field(self.raw(), "assistant_confidence_threshold")
+    }
+
+    /// Returns the assistant-tokenizer lookbehind length.
+    #[must_use]
+    pub fn assistant_lookbehind(&self) -> SourceField<'a, u64> {
+        u64_field(self.raw(), "assistant_lookbehind")
+    }
+
+    /// Returns the target-tokenizer lookbehind length.
+    #[must_use]
+    pub fn target_lookbehind(&self) -> SourceField<'a, u64> {
+        u64_field(self.raw(), "target_lookbehind")
     }
 }
 
@@ -1545,7 +1842,7 @@ fn is_component_tuple(name: &str, value: &Value) -> bool {
 }
 
 /// A Diffusers component tuple interpreted without importing its library.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum DiffusersComponentValue<'a> {
     /// A component class with an optional source library name.
@@ -1561,11 +1858,41 @@ pub enum DiffusersComponentValue<'a> {
     Invalid(&'a Value),
 }
 
+impl fmt::Debug for DiffusersComponentValue<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Reference {
+                library,
+                class_name,
+            } => formatter
+                .debug_struct("Reference")
+                .field("has_library", &library.is_some())
+                .field("class_name_byte_len", &class_name.len())
+                .finish_non_exhaustive(),
+            Self::Optional => formatter.write_str("Optional"),
+            Self::Invalid(value) => formatter
+                .debug_tuple("Invalid")
+                .field(&JsonSummary(value))
+                .finish(),
+        }
+    }
+}
+
 /// One component entry from a Diffusers pipeline index.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct DiffusersComponent<'a> {
     name: &'a str,
     raw: &'a Value,
+}
+
+impl fmt::Debug for DiffusersComponent<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DiffusersComponent")
+            .field("name_byte_len", &self.name.len())
+            .field("value", &self.value())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> DiffusersComponent<'a> {
@@ -1613,6 +1940,7 @@ impl fmt::Debug for DiffusersComponents<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DiffusersComponents")
+            .field("remaining_source_field_count", &self.fields.len())
             .finish_non_exhaustive()
     }
 }
@@ -1646,6 +1974,7 @@ impl fmt::Debug for ModelIndexExtraFields<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ModelIndexExtraFields")
+            .field("remaining_source_field_count", &self.fields.len())
             .finish_non_exhaustive()
     }
 }
@@ -1668,9 +1997,15 @@ impl<'a> Iterator for ModelIndexExtraFields<'a> {
 }
 
 /// Typed fields and components from a Diffusers `model_index.json` document.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ModelIndexView<'a> {
     inner: ObjectView<'a>,
+}
+
+impl fmt::Debug for ModelIndexView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt_as("ModelIndexView", formatter)
+    }
 }
 
 impl<'a> ModelIndexView<'a> {
@@ -1744,9 +2079,20 @@ impl<'a> ModelIndexView<'a> {
 }
 
 /// A borrowed view of a `chat_template.jinja` source document.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ChatTemplateView<'a> {
     source: &'a SourceDocument,
+}
+
+impl fmt::Debug for ChatTemplateView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ChatTemplateView")
+            .field("source_path", &self.source.relative_path())
+            .field("document_kind", self.source.kind())
+            .field("byte_len", &self.source.original().len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> ChatTemplateView<'a> {
@@ -1773,9 +2119,18 @@ impl<'a> ChatTemplateView<'a> {
 }
 
 /// A typed view of safetensors index metadata.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SafetensorsMetadataView<'a> {
     object: &'a Map<String, Value>,
+}
+
+impl fmt::Debug for SafetensorsMetadataView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SafetensorsMetadataView")
+            .field("field_count", &self.object.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> SafetensorsMetadataView<'a> {
@@ -1802,9 +2157,18 @@ impl<'a> SafetensorsMetadataView<'a> {
 }
 
 /// A typed view of tensor-to-shard entries in a safetensors index.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SafetensorsWeightMapView<'a> {
     object: &'a Map<String, Value>,
+}
+
+impl fmt::Debug for SafetensorsWeightMapView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SafetensorsWeightMapView")
+            .field("entry_count", &self.object.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> SafetensorsWeightMapView<'a> {
@@ -1838,6 +2202,7 @@ impl fmt::Debug for SafetensorsWeightMapEntries<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("SafetensorsWeightMapEntries")
+            .field("remaining_entry_count", &self.fields.len())
             .finish_non_exhaustive()
     }
 }

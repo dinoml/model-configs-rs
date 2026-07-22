@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use model_configs::{
-    ArchitectureId, DiagnosticCode, ModelRepository, SourceField, TypedDocumentView,
+    ArchitectureId, DiagnosticCode, ModelRepository, SourceField, SpecialTokenValue,
+    TypedDocumentView,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -84,6 +85,14 @@ fn representative_remaining_formats_have_typed_views() -> Result<(), Box<dyn std
                 assert!(matches!(view.model_max_length(), SourceField::Value(_)));
                 seen.push("tokenizer");
             }
+            TypedDocumentView::SpecialTokensMap(view) => {
+                assert!(matches!(
+                    view.pad_token(),
+                    SourceField::Value(SpecialTokenValue::AddedToken(token))
+                        if token.content() == SourceField::Value("<|endoftext|>")
+                ));
+                seen.push("special_tokens");
+            }
             _ => return Err("unexpected fixture document kind".into()),
         }
     }
@@ -98,6 +107,7 @@ fn representative_remaining_formats_have_typed_views() -> Result<(), Box<dyn std
             "processor",
             "quantization",
             "safetensors_index",
+            "special_tokens",
             "tokenizer",
         ]
     );

@@ -77,6 +77,90 @@ fn config_view_exposes_legacy_task_without_reporting_it_as_extra()
 }
 
 #[test]
+fn config_view_exposes_ecosystem_version_and_nested_configs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let document = model_configs::SourceDocument::parse(
+        "config.json",
+        br#"{
+            "_diffusers_version":"0.35.0",
+            "text_config":{"model_type":"text"},
+            "vision_config":null,
+            "audio_config":"invalid",
+            "encoder_config":{"model_type":"encoder"},
+            "future_config":{"model_type":"future"},
+            "future":true
+        }"#,
+    )?;
+    let TypedDocumentView::Config(view) = TypedDocumentView::try_from(&document)? else {
+        return Err("expected config view".into());
+    };
+
+    assert_eq!(view.diffusers_version(), SourceField::Value("0.35.0"));
+    assert!(matches!(
+        view.text_config(),
+        SourceField::Value(value) if value.get("model_type") == Some(&json!("text"))
+    ));
+    assert_eq!(view.vision_config(), SourceField::Null);
+    assert_eq!(view.audio_config(), SourceField::Invalid(&json!("invalid")));
+    assert!(matches!(
+        view.encoder_config(),
+        SourceField::Value(value) if value.get("model_type") == Some(&json!("encoder"))
+    ));
+    assert!(matches!(
+        view.nested_config("future_config"),
+        SourceField::Value(value) if value.get("model_type") == Some(&json!("future"))
+    ));
+    assert_eq!(
+        view.extra().collect::<Vec<_>>(),
+        vec![
+            ("future_config", &json!({"model_type":"future"})),
+            ("future", &json!(true)),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn generation_view_recognizes_the_pinned_parameter_family() -> Result<(), Box<dyn std::error::Error>>
+{
+    let document = model_configs::SourceDocument::parse(
+        "generation_config.json",
+        br#"{
+            "encoder_repetition_penalty":1.2,
+            "output_scores":true,
+            "num_assistant_tokens":8,
+            "assistant_lookbehind":12,
+            "top_k":-1,
+            "future_generation_field":"kept"
+        }"#,
+    )?;
+    let TypedDocumentView::GenerationConfig(view) = TypedDocumentView::try_from(&document)? else {
+        return Err("expected generation config view".into());
+    };
+
+    assert_eq!(view.encoder_repetition_penalty(), SourceField::Value(1.2));
+    assert_eq!(
+        (
+            view.output_scores(),
+            view.num_assistant_tokens(),
+            view.assistant_lookbehind(),
+            view.top_k(),
+        ),
+        (
+            SourceField::Value(true),
+            SourceField::Value(8),
+            SourceField::Value(12),
+            SourceField::Value(-1),
+        )
+    );
+    assert_eq!(
+        view.extra().collect::<Vec<_>>(),
+        vec![("future_generation_field", &json!("kept"))]
+    );
+    Ok(())
+}
+
+#[test]
 fn model_index_view_exposes_legacy_task_as_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let document = model_configs::SourceDocument::parse(
         "model_index.json",

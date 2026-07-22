@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 use serde_json::Value;
@@ -5,10 +6,21 @@ use serde_json::Value;
 use crate::{ChatTemplateError, ConfigError, ModelRepository, SelectionError, SourceDocument};
 
 /// Source selected by a versioned repository-level precedence rule.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SourceSelection<'a> {
     document: &'a SourceDocument,
     json_pointer: Option<&'static str>,
+}
+
+impl fmt::Debug for SourceSelection<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SourceSelection")
+            .field("document_path", &self.document.relative_path())
+            .field("document_kind", self.document.kind())
+            .field("json_pointer", &self.json_pointer)
+            .finish()
+    }
 }
 
 impl<'a> SourceSelection<'a> {
@@ -26,7 +38,8 @@ impl<'a> SourceSelection<'a> {
 }
 
 /// Effective chat-template value selected without executing Jinja.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum ChatTemplateValue<'a> {
     /// Standalone UTF-8 Jinja source.
     Text(&'a str),
@@ -34,13 +47,58 @@ pub enum ChatTemplateValue<'a> {
     Inline(&'a Value),
 }
 
+impl fmt::Debug for ChatTemplateValue<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => formatter
+                .debug_struct("Text")
+                .field("byte_len", &text.len())
+                .finish_non_exhaustive(),
+            Self::Inline(value) => formatter
+                .debug_struct("Inline")
+                .field("json_type", &json_type(value))
+                .field("child_count", &json_child_count(value))
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 /// Effective chat template and its exact source location.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ChatTemplateSelection<'a> {
     /// Selected inert template value.
     pub value: ChatTemplateValue<'a>,
     /// Exact document and optional inline pointer.
     pub source: SourceSelection<'a>,
+}
+
+impl fmt::Debug for ChatTemplateSelection<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ChatTemplateSelection")
+            .field("value", &self.value)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn json_child_count(value: &Value) -> Option<usize> {
+    match value {
+        Value::Array(values) => Some(values.len()),
+        Value::Object(object) => Some(object.len()),
+        _ => None,
+    }
 }
 
 impl ModelRepository {
@@ -207,14 +265,25 @@ fn scoped_path(scope: &Path, filename: &str) -> String {
 }
 
 const GENERATION_FIELDS: &[&str] = &[
+    "assistant_confidence_threshold",
+    "assistant_early_exit",
+    "assistant_lookbehind",
     "bad_words_ids",
     "begin_suppress_tokens",
     "bos_token_id",
+    "cache_config",
+    "cache_implementation",
+    "compile_config",
     "constraints",
+    "continuous_batching_config",
     "decoder_start_token_id",
+    "disable_compile",
     "diversity_penalty",
     "do_sample",
+    "dola_layers",
     "early_stopping",
+    "encoder_no_repeat_ngram_size",
+    "encoder_repetition_penalty",
     "eos_token_id",
     "eta_cutoff",
     "epsilon_cutoff",
@@ -223,24 +292,45 @@ const GENERATION_FIELDS: &[&str] = &[
     "forced_bos_token_id",
     "forced_decoder_ids",
     "forced_eos_token_id",
+    "guidance_scale",
+    "is_assistant",
     "length_penalty",
+    "low_memory",
     "max_length",
+    "max_matching_ngram_size",
     "max_new_tokens",
+    "max_time",
     "min_length",
     "min_new_tokens",
+    "min_p",
     "no_repeat_ngram_size",
+    "num_assistant_tokens",
+    "num_assistant_tokens_schedule",
     "num_beams",
     "num_beam_groups",
     "num_return_sequences",
+    "output_attentions",
+    "output_hidden_states",
+    "output_logits",
+    "output_scores",
     "pad_token_id",
     "penalty_alpha",
+    "prefill_chunk_size",
+    "prompt_lookup_num_tokens",
     "repetition_penalty",
     "remove_invalid_values",
     "renormalize_logits",
+    "return_dict_in_generate",
     "sequence_bias",
     "suppress_tokens",
+    "stop_strings",
+    "target_lookbehind",
     "temperature",
+    "token_healing",
+    "top_h",
     "top_k",
     "top_p",
     "typical_p",
+    "use_cache",
+    "watermarking_config",
 ];

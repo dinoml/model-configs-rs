@@ -23,33 +23,55 @@ pub(crate) fn validate_repository(repository: &ModelRepository) -> Vec<Diagnosti
         if crate::diagnostic::limit_reached(&diagnostics) {
             break;
         }
-        validate_document_shape(document, &mut diagnostics);
-        if crate::diagnostic::limit_reached(&diagnostics) {
-            break;
-        }
-        validate_semantic_fields(document, &mut diagnostics);
-        if crate::diagnostic::limit_reached(&diagnostics) {
-            break;
-        }
-        validate_executable_references(document, &mut diagnostics);
-        if crate::diagnostic::limit_reached(&diagnostics) {
-            break;
-        }
         match document.kind() {
-            DocumentKind::ModelIndex => {
-                validate_model_index_references(repository, document, &mut diagnostics);
-            }
             DocumentKind::SafetensorsIndex => {
                 validate_safetensors_index(repository, document, &mut diagnostics);
             }
             DocumentKind::AdapterConfig => {
                 validate_adapter(repository, document, &mut diagnostics);
             }
+            DocumentKind::ModelIndex => {
+                validate_model_index_references(repository, document, &mut diagnostics);
+            }
+            _ => {}
+        }
+    }
+    for document in repository.documents() {
+        if crate::diagnostic::limit_reached(&diagnostics) {
+            break;
+        }
+        validate_document_shape(document, &mut diagnostics);
+        if crate::diagnostic::limit_reached(&diagnostics) {
+            break;
+        }
+        validate_semantic_fields(document, &mut diagnostics);
+    }
+    for document in repository.documents() {
+        if crate::diagnostic::limit_reached(&diagnostics) {
+            break;
+        }
+        match document.kind() {
+            DocumentKind::ModelIndex => {
+                validate_model_index_configuration_references(
+                    repository,
+                    document,
+                    &mut diagnostics,
+                );
+            }
             DocumentKind::ProcessorConfig => {
                 validate_processor(repository, document, &mut diagnostics);
             }
             _ => {}
         }
+    }
+    for document in repository.documents() {
+        if crate::diagnostic::limit_reached(&diagnostics) {
+            break;
+        }
+        if document.kind() == &DocumentKind::ModelIndex {
+            validate_model_index_executable_references(document, &mut diagnostics);
+        }
+        validate_executable_references(document, &mut diagnostics);
     }
     diagnostics
 }
@@ -95,29 +117,27 @@ fn validate_model_index_references(
         let Value::Array(tuple) = value else {
             continue;
         };
-        let requires_code = match tuple.as_slice() {
-            [Value::String(_), Value::String(_)] => false,
-            [Value::Null, Value::String(_)] => true,
+        match tuple.as_slice() {
+            [Value::String(_) | Value::Null, Value::String(_)] => {}
             _ => continue,
-        };
-        let pointer = bounded_pointer_child(Some(""), name);
-
-        if requires_code {
-            let mut diagnostic = Diagnostic::warning(
-                DiagnosticCode::CustomComponentRequiresCode,
-                "component tuple has no data-only library and requires implementation code",
-            );
-            diagnostic.document_path = Some(document.relative_path().to_path_buf());
-            diagnostic.json_path.clone_from(&pointer);
-            crate::diagnostic::push_bounded(diagnostics, diagnostic);
         }
+        let pointer = bounded_pointer_child(Some(""), name);
 
         if !crate::normalize::is_safe_component_name(name) {
             // Semantic validation reports the unsafe name. Do not construct a
             // related path from it here.
             continue;
         }
-        let related_path = logical_join(base, Path::new(name));
+        let Ok(related_path) = logical_join(base, Path::new(name)) else {
+            let mut diagnostic = Diagnostic::error(
+                DiagnosticCode::UnsafeReferencePath,
+                "component path exceeds the portable repository path boundary",
+            );
+            diagnostic.document_path = Some(document.relative_path().to_path_buf());
+            diagnostic.json_path = pointer;
+            crate::diagnostic::push_bounded(diagnostics, diagnostic);
+            continue;
+        };
         if !repository.has_directory(&related_path) {
             let mut diagnostic = Diagnostic::error(
                 DiagnosticCode::MissingComponentDirectory,
@@ -130,10 +150,45 @@ fn validate_model_index_references(
             diagnostic.json_path = pointer;
             diagnostic.related_path = Some(related_path);
             crate::diagnostic::push_bounded(diagnostics, diagnostic);
+        }
+    }
+}
+
+fn validate_model_index_configuration_references(
+    repository: &ModelRepository,
+    document: &SourceDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if document.has_duplicate_keys() {
+        return;
+    }
+    let Some(object) = document.json().and_then(Value::as_object) else {
+        return;
+    };
+    let base = document.relative_path().parent().unwrap_or(Path::new(""));
+    for (name, value) in object {
+        if crate::diagnostic::limit_reached(diagnostics) {
+            break;
+        }
+        if crate::views::is_model_index_metadata(name)
+            || !crate::normalize::is_safe_component_name(name)
+            || !matches!(
+                value,
+                Value::Array(tuple)
+                    if matches!(
+                        tuple.as_slice(),
+                        [Value::String(_) | Value::Null, Value::String(_)]
+                    )
+            )
+        {
             continue;
         }
-        let has_config = has_component_configuration(repository, &related_path);
-        if !has_config {
+        let Ok(related_path) = logical_join(base, Path::new(name)) else {
+            continue;
+        };
+        if repository.has_directory(&related_path)
+            && !has_component_configuration(repository, &related_path)
+        {
             let mut diagnostic = Diagnostic::warning(
                 DiagnosticCode::MissingComponentConfig,
                 format!(
@@ -142,10 +197,48 @@ fn validate_model_index_references(
                 ),
             );
             diagnostic.document_path = Some(document.relative_path().to_path_buf());
-            diagnostic.json_path = pointer;
+            diagnostic.json_path = bounded_pointer_child(Some(""), name);
             diagnostic.related_path = Some(related_path);
             crate::diagnostic::push_bounded(diagnostics, diagnostic);
         }
+    }
+}
+
+fn validate_model_index_executable_references(
+    document: &SourceDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if document.has_duplicate_keys() {
+        return;
+    }
+    let Some(object) = document.json().and_then(Value::as_object) else {
+        return;
+    };
+    for (name, value) in object {
+        if crate::diagnostic::limit_reached(diagnostics) {
+            break;
+        }
+        if crate::views::is_model_index_metadata(name) {
+            continue;
+        }
+        let Value::Array(tuple) = value else {
+            continue;
+        };
+        let (code, message) = match tuple.as_slice() {
+            [Value::Null, Value::String(_)] => (
+                DiagnosticCode::CustomComponentRequiresCode,
+                "component tuple has no data-only library and requires implementation code",
+            ),
+            [Value::String(library), Value::String(_)] if !is_known_component_library(library) => (
+                DiagnosticCode::ExecutableReferenceInert,
+                "component names a custom library that remains inert",
+            ),
+            _ => continue,
+        };
+        let mut diagnostic = Diagnostic::warning(code, message);
+        diagnostic.document_path = Some(document.relative_path().to_path_buf());
+        diagnostic.json_path = bounded_pointer_child(Some(""), name);
+        crate::diagnostic::push_bounded(diagnostics, diagnostic);
     }
 }
 
@@ -156,15 +249,34 @@ fn has_component_configuration(repository: &ModelRepository, directory: &Path) -
         "preprocessor_config.json",
         "processor_config.json",
         "scheduler_config.json",
+        "model_index.json",
         "adapter_config.json",
         "quantization_config.json",
     ]
     .iter()
     .any(|basename| {
-        repository
-            .document(logical_join(directory, Path::new(basename)))
+        logical_join(directory, Path::new(basename))
+            .ok()
+            .and_then(|path| repository.document(path))
             .is_some()
     })
+}
+
+fn is_known_component_library(library: &str) -> bool {
+    matches!(
+        library,
+        "diffusers"
+            | "transformers"
+            | "flax"
+            | "k_diffusion"
+            | "onnxruntime"
+            | "optimum"
+            | "peft"
+            | "sentence_transformers"
+            | "stable_diffusion"
+            | "timm"
+            | "torch"
+    )
 }
 
 fn validate_document_shape(document: &SourceDocument, diagnostics: &mut Vec<Diagnostic>) {
@@ -258,6 +370,17 @@ fn validate_semantic_fields(document: &SourceDocument, diagnostics: &mut Vec<Dia
         }
         validate_typed_field(document, object.get(*field), field, *shape, diagnostics);
     }
+    if document.kind() == &DocumentKind::Config {
+        for (field, shape) in GENERATION_FIELDS
+            .iter()
+            .filter(|(field, _)| !matches!(*field, "_from_model_config" | "transformers_version"))
+        {
+            if crate::diagnostic::limit_reached(diagnostics) {
+                return;
+            }
+            validate_typed_field(document, object.get(*field), field, *shape, diagnostics);
+        }
+    }
     if matches!(
         document.kind(),
         DocumentKind::TokenizerConfig | DocumentKind::SpecialTokensMap
@@ -308,11 +431,17 @@ fn validate_semantic_fields(document: &SourceDocument, diagnostics: &mut Vec<Dia
 
 #[derive(Clone, Copy)]
 enum FieldShape {
+    Array,
     String,
     Bool,
+    BoolOrString,
     U64,
     I64,
+    I64OrI64Array,
     F64,
+    Object,
+    StringOrI64Array,
+    StringOrStringArray,
 }
 
 fn validate_typed_field(
@@ -329,21 +458,48 @@ fn validate_typed_field(
         return;
     }
     let valid = match shape {
+        FieldShape::Array => value.is_array(),
         FieldShape::String => value.is_string(),
         FieldShape::Bool => value.is_boolean(),
+        FieldShape::BoolOrString => value.is_boolean() || value.is_string(),
         FieldShape::U64 => value.as_u64().is_some(),
         FieldShape::I64 => value.as_i64().is_some(),
+        FieldShape::I64OrI64Array => {
+            value.as_i64().is_some()
+                || value
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(|value| value.as_i64().is_some()))
+        }
         FieldShape::F64 => value.as_f64().is_some(),
+        FieldShape::Object => value.is_object(),
+        FieldShape::StringOrI64Array => {
+            value.is_string()
+                || value
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(|value| value.as_i64().is_some()))
+        }
+        FieldShape::StringOrStringArray => {
+            value.is_string()
+                || value
+                    .as_array()
+                    .is_some_and(|values| values.iter().all(Value::is_string))
+        }
     };
     if valid {
         return;
     }
     let expected = match shape {
+        FieldShape::Array => "an array",
         FieldShape::String => "a string",
         FieldShape::Bool => "a boolean",
+        FieldShape::BoolOrString => "a boolean or string",
         FieldShape::U64 => "a non-negative integer",
         FieldShape::I64 => "an integer",
+        FieldShape::I64OrI64Array => "an integer or integer array",
         FieldShape::F64 => "a number",
+        FieldShape::Object => "an object",
+        FieldShape::StringOrI64Array => "a string or integer array",
+        FieldShape::StringOrStringArray => "a string or string array",
     };
     let pointer = field
         .split('/')
@@ -361,6 +517,7 @@ fn validate_typed_field(
 const CONFIG_FIELDS: &[(&str, FieldShape)] = &[
     ("_name_or_path", FieldShape::String),
     ("_class_name", FieldShape::String),
+    ("_diffusers_version", FieldShape::String),
     ("model_type", FieldShape::String),
     ("transformers_version", FieldShape::String),
     ("pipeline_tag", FieldShape::String),
@@ -369,26 +526,87 @@ const CONFIG_FIELDS: &[(&str, FieldShape)] = &[
     ("tie_word_embeddings", FieldShape::Bool),
     ("vocab_size", FieldShape::U64),
     ("is_encoder_decoder", FieldShape::Bool),
+    ("audio_config", FieldShape::Object),
+    ("decoder", FieldShape::Object),
+    ("decoder_config", FieldShape::Object),
+    ("encoder", FieldShape::Object),
+    ("encoder_config", FieldShape::Object),
+    ("quantization_config", FieldShape::Object),
+    ("text_config", FieldShape::Object),
+    ("vision_config", FieldShape::Object),
 ];
 
 const GENERATION_FIELDS: &[(&str, FieldShape)] = &[
     ("_from_model_config", FieldShape::Bool),
-    ("transformers_version", FieldShape::String),
+    ("assistant_confidence_threshold", FieldShape::F64),
+    ("assistant_early_exit", FieldShape::U64),
+    ("assistant_lookbehind", FieldShape::U64),
+    ("bad_words_ids", FieldShape::Array),
+    ("begin_suppress_tokens", FieldShape::Array),
+    ("bos_token_id", FieldShape::I64),
+    ("cache_config", FieldShape::Object),
+    ("cache_implementation", FieldShape::String),
+    ("compile_config", FieldShape::Object),
+    ("constraints", FieldShape::Array),
+    ("continuous_batching_config", FieldShape::Object),
+    ("decoder_start_token_id", FieldShape::I64OrI64Array),
+    ("disable_compile", FieldShape::Bool),
+    ("diversity_penalty", FieldShape::F64),
+    ("do_sample", FieldShape::Bool),
+    ("dola_layers", FieldShape::StringOrI64Array),
+    ("early_stopping", FieldShape::BoolOrString),
+    ("encoder_no_repeat_ngram_size", FieldShape::U64),
+    ("encoder_repetition_penalty", FieldShape::F64),
+    ("eos_token_id", FieldShape::I64OrI64Array),
+    ("epsilon_cutoff", FieldShape::F64),
+    ("eta_cutoff", FieldShape::F64),
+    ("exponential_decay_length_penalty", FieldShape::Array),
+    ("force_words_ids", FieldShape::Array),
+    ("forced_bos_token_id", FieldShape::I64),
+    ("forced_decoder_ids", FieldShape::Array),
+    ("forced_eos_token_id", FieldShape::I64OrI64Array),
+    ("guidance_scale", FieldShape::F64),
+    ("is_assistant", FieldShape::Bool),
+    ("length_penalty", FieldShape::F64),
+    ("low_memory", FieldShape::Bool),
     ("max_length", FieldShape::U64),
+    ("max_matching_ngram_size", FieldShape::U64),
     ("max_new_tokens", FieldShape::U64),
+    ("max_time", FieldShape::F64),
     ("min_length", FieldShape::U64),
     ("min_new_tokens", FieldShape::U64),
-    ("do_sample", FieldShape::Bool),
-    ("num_beams", FieldShape::U64),
-    ("temperature", FieldShape::F64),
-    ("top_k", FieldShape::U64),
-    ("top_p", FieldShape::F64),
-    ("typical_p", FieldShape::F64),
-    ("repetition_penalty", FieldShape::F64),
-    ("length_penalty", FieldShape::F64),
+    ("min_p", FieldShape::F64),
     ("no_repeat_ngram_size", FieldShape::U64),
+    ("num_assistant_tokens", FieldShape::U64),
+    ("num_assistant_tokens_schedule", FieldShape::String),
+    ("num_beam_groups", FieldShape::U64),
+    ("num_beams", FieldShape::U64),
+    ("num_return_sequences", FieldShape::U64),
+    ("output_attentions", FieldShape::Bool),
+    ("output_hidden_states", FieldShape::Bool),
+    ("output_logits", FieldShape::Bool),
+    ("output_scores", FieldShape::Bool),
+    ("pad_token_id", FieldShape::I64),
+    ("penalty_alpha", FieldShape::F64),
+    ("prefill_chunk_size", FieldShape::U64),
+    ("prompt_lookup_num_tokens", FieldShape::U64),
+    ("remove_invalid_values", FieldShape::Bool),
+    ("renormalize_logits", FieldShape::Bool),
+    ("repetition_penalty", FieldShape::F64),
+    ("return_dict_in_generate", FieldShape::Bool),
+    ("sequence_bias", FieldShape::Object),
+    ("stop_strings", FieldShape::StringOrStringArray),
+    ("suppress_tokens", FieldShape::Array),
+    ("target_lookbehind", FieldShape::U64),
+    ("temperature", FieldShape::F64),
+    ("token_healing", FieldShape::Bool),
+    ("top_h", FieldShape::F64),
+    ("top_k", FieldShape::I64),
+    ("top_p", FieldShape::F64),
+    ("transformers_version", FieldShape::String),
+    ("typical_p", FieldShape::F64),
     ("use_cache", FieldShape::Bool),
-    ("cache_implementation", FieldShape::String),
+    ("watermarking_config", FieldShape::Object),
 ];
 
 const TOKENIZER_FIELDS: &[(&str, FieldShape)] = &[
@@ -717,12 +935,25 @@ fn walk_executable_references(
     }
     match value {
         Value::Object(object) => {
+            let custom_code_context = object.iter().any(|(key, child)| {
+                is_executable_locator(key, child)
+                    && matches!(
+                        key.as_str(),
+                        "auto_map"
+                            | "auto_mapping"
+                            | "_module"
+                            | "custom_pipeline"
+                            | "trust_remote_code"
+                    )
+            });
             for (key, child) in object {
                 if crate::diagnostic::limit_reached(diagnostics) {
                     break;
                 }
                 let child_pointer = bounded_pointer_child(pointer, key);
-                if is_executable_locator(key, child) {
+                if is_executable_locator(key, child)
+                    || (custom_code_context && is_custom_class_locator(key, child))
+                {
                     let mut diagnostic = Diagnostic::warning(
                         DiagnosticCode::ExecutableReferenceInert,
                         "source field names executable metadata that remains inert",
@@ -761,6 +992,17 @@ fn is_executable_locator(key: &str, value: &Value) -> bool {
         Value::Object(value) => !value.is_empty(),
         _ => true,
     }
+}
+
+fn is_custom_class_locator(key: &str, value: &Value) -> bool {
+    matches!(
+        key,
+        "feature_extractor_type"
+            | "image_processor_type"
+            | "processor_class"
+            | "slow_tokenizer_class"
+            | "tokenizer_class"
+    ) && value.as_str().is_some_and(|value| !value.is_empty())
 }
 
 fn validate_safetensors_index(
@@ -840,7 +1082,16 @@ fn validate_safetensors_index(
             crate::diagnostic::push_bounded(diagnostics, diagnostic);
             continue;
         }
-        let related = logical_join(base, shard_path);
+        let Ok(related) = logical_join(base, shard_path) else {
+            let mut diagnostic = Diagnostic::error(
+                DiagnosticCode::UnsafeCheckpointShardPath,
+                "checkpoint shard path exceeds the portable repository path boundary",
+            );
+            diagnostic.document_path = Some(document.relative_path().to_path_buf());
+            diagnostic.json_path = Some("/weight_map".into());
+            crate::diagnostic::push_bounded(diagnostics, diagnostic);
+            continue;
+        };
         if !repository.has_file(&related) {
             let mut diagnostic = Diagnostic::error(
                 DiagnosticCode::MissingCheckpointShard,
@@ -888,7 +1139,16 @@ fn validate_adapter(
         crate::diagnostic::push_bounded(diagnostics, diagnostic);
         return;
     }
-    let related = logical_join(parent, path);
+    let Ok(related) = logical_join(parent, path) else {
+        let mut diagnostic = Diagnostic::error(
+            DiagnosticCode::UnsafeAdapterBasePath,
+            "adapter local base-model path exceeds the portable repository path boundary",
+        );
+        diagnostic.document_path = Some(document.relative_path().to_path_buf());
+        diagnostic.json_path = Some("/base_model_name_or_path".into());
+        crate::diagnostic::push_bounded(diagnostics, diagnostic);
+        return;
+    };
     if !repository.has_entry(&related) {
         let mut diagnostic = Diagnostic::error(
             DiagnosticCode::MissingAdapterBasePath,
@@ -916,17 +1176,20 @@ fn validate_processor(
         .relative_path()
         .parent()
         .unwrap_or_else(|| Path::new(""));
-    let needs_tokenizer = ["tokenizer", "tokenizer_class"]
+    let needs_tokenizer = object
+        .get("tokenizer_class")
+        .is_some_and(is_nonempty_string)
+        || object
+            .get("tokenizer")
+            .is_some_and(is_embedded_component_declaration);
+    let needs_preprocessor = ["feature_extractor_type", "image_processor_type"]
         .iter()
-        .any(|key| object.get(*key).is_some_and(is_meaningful_declaration));
-    let needs_preprocessor = [
-        "feature_extractor",
-        "feature_extractor_type",
-        "image_processor",
-        "image_processor_type",
-    ]
-    .iter()
-    .any(|key| object.get(*key).is_some_and(is_meaningful_declaration));
+        .any(|key| object.get(*key).is_some_and(is_nonempty_string))
+        || ["feature_extractor", "image_processor"].iter().any(|key| {
+            object
+                .get(*key)
+                .is_some_and(is_embedded_component_declaration)
+        });
     if needs_tokenizer && !has_document(repository, parent, DocumentKind::TokenizerConfig) {
         let mut diagnostic = Diagnostic::warning(
             DiagnosticCode::MissingTokenizerConfig,
@@ -945,13 +1208,15 @@ fn validate_processor(
     }
 }
 
-fn is_meaningful_declaration(value: &Value) -> bool {
+fn is_nonempty_string(value: &Value) -> bool {
+    value.as_str().is_some_and(|value| !value.is_empty())
+}
+
+fn is_embedded_component_declaration(value: &Value) -> bool {
     match value {
-        Value::Null => false,
         Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
         Value::Object(value) => !value.is_empty(),
-        Value::Bool(_) | Value::Number(_) => true,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => false,
     }
 }
 
@@ -961,8 +1226,9 @@ fn has_document(repository: &ModelRepository, parent: &Path, kind: DocumentKind)
         DocumentKind::PreprocessorConfig => "preprocessor_config.json",
         _ => return false,
     };
-    repository
-        .document(logical_join(parent, Path::new(basename)))
+    logical_join(parent, Path::new(basename))
+        .ok()
+        .and_then(|path| repository.document(path))
         .is_some()
 }
 
@@ -975,15 +1241,18 @@ fn explicit_local_adapter_path(value: &str) -> Option<&str> {
         return Some(path);
     }
     let bytes = value.as_bytes();
-    let windows_absolute = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && matches!(bytes[2], b'/' | b'\\');
-    if value.starts_with(['/', '\\'])
+    let windows_drive_path = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    if value == "."
+        || value == ".."
+        || value.starts_with(['/', '\\'])
         || value.starts_with("../")
         || value.starts_with(".\\")
         || value.starts_with("..\\")
-        || windows_absolute
+        || value.starts_with('~')
+        || value
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        || windows_drive_path
     {
         Some(value)
     } else {
@@ -992,17 +1261,23 @@ fn explicit_local_adapter_path(value: &str) -> Option<&str> {
 }
 
 fn is_safe_adapter_path(path: &Path) -> bool {
-    is_safe_reference(path)
+    path.to_str().is_some_and(|value| !value.starts_with('~')) && is_safe_reference(path)
 }
 
-fn logical_join(base: &Path, child: &Path) -> PathBuf {
+fn logical_join(base: &Path, child: &Path) -> Result<PathBuf, crate::ConfigError> {
+    if !base.as_os_str().is_empty() {
+        crate::path_serde::validate(base)?;
+    }
+    crate::path_serde::validate(child)?;
     let base = crate::path_serde::portable(base);
     let child = crate::path_serde::portable(child);
-    if base.is_empty() {
+    let joined = if base.is_empty() {
         PathBuf::from(child)
     } else {
         PathBuf::from(format!("{base}/{child}"))
-    }
+    };
+    crate::path_serde::validate(&joined)?;
+    Ok(joined)
 }
 
 fn bounded_pointer_child(parent: Option<&str>, key: &str) -> Option<String> {

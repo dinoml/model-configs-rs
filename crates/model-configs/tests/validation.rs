@@ -63,6 +63,38 @@ fn local_adapter_base_path_must_resolve_inside_repository() -> Result<(), Box<dy
 }
 
 #[test]
+fn unsafe_explicit_adapter_path_spellings_are_diagnosed() -> Result<(), Box<dyn std::error::Error>>
+{
+    for path in [
+        ".",
+        "..",
+        "~",
+        "~/model",
+        r"~\model",
+        "~user/model",
+        "C:relative",
+        "file:///tmp/model",
+    ] {
+        let config = SourceDocument::parse("config.json", br#"{"model_type":"bert"}"#)?;
+        let adapter = SourceDocument::parse(
+            "adapter_config.json",
+            serde_json::to_vec(&serde_json::json!({
+                "base_model_name_or_path": path,
+                "peft_type": "LORA"
+            }))?,
+        )?;
+        let diagnostics = ModelRepository::from_documents(vec![config, adapter])?.diagnostics();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == DiagnosticCode::UnsafeAdapterBasePath),
+            "unsafe local spelling was not diagnosed: {path}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn hub_adapter_base_id_is_not_mistaken_for_local_path() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     fs::write(temp.path().join("config.json"), r#"{"model_type":"bert"}"#)?;
@@ -132,6 +164,37 @@ fn diagnostic_count_and_pointer_retention_are_bounded_for_long_shared_prefixes()
 }
 
 #[test]
+fn executable_warning_saturation_cannot_hide_reference_errors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let locators = std::iter::repeat_n(
+        serde_json::json!({"auto_map": "custom.Class"}),
+        MAX_REPOSITORY_DIAGNOSTICS + 8,
+    )
+    .collect::<Vec<_>>();
+    let document = SourceDocument::parse(
+        "model.safetensors.index.json",
+        serde_json::to_vec(&serde_json::json!({
+            "weight_map": {"tensor": "missing.safetensors"},
+            "future": locators
+        }))?,
+    )?;
+    let repository = ModelRepository::from_documents(vec![document])?;
+    let diagnostics = repository.diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingCheckpointShard)
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::DiagnosticLimitReached)
+    );
+    Ok(())
+}
+
+#[test]
 fn processor_declared_tokenizer_relationship_is_checked() -> Result<(), Box<dyn std::error::Error>>
 {
     let temp = tempfile::tempdir()?;
@@ -164,6 +227,30 @@ fn null_and_empty_processor_fields_do_not_declare_companion_relationships()
     )?;
     let diagnostics = ModelRepository::read(temp.path())?.diagnostics();
 
+    assert!(!diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.code,
+            DiagnosticCode::MissingTokenizerConfig | DiagnosticCode::MissingPreprocessorConfig
+        )
+    }));
+    Ok(())
+}
+
+#[test]
+fn wrong_typed_processor_class_fields_do_not_declare_companion_relationships()
+-> Result<(), Box<dyn std::error::Error>> {
+    let processor = SourceDocument::parse(
+        "processor_config.json",
+        br#"{"tokenizer_class":42,"image_processor_type":false}"#,
+    )?;
+    let diagnostics = ModelRepository::from_documents(vec![processor])?.diagnostics();
+
+    for pointer in ["/tokenizer_class", "/image_processor_type"] {
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidDocumentShape
+                && diagnostic.json_path.as_deref() == Some(pointer)
+        }));
+    }
     assert!(!diagnostics.iter().any(|diagnostic| {
         matches!(
             diagnostic.code,
@@ -258,6 +345,28 @@ fn chat_template_alone_is_not_a_component_configuration() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn nested_model_index_counts_as_component_configuration() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = SourceDocument::parse(
+        "model_index.json",
+        br#"{"_class_name":"RootPipeline","nested":["diffusers","NestedPipeline"]}"#,
+    )?;
+    let nested = SourceDocument::parse(
+        "nested/model_index.json",
+        br#"{"_class_name":"NestedPipeline"}"#,
+    )?;
+    let repository = ModelRepository::from_documents(vec![root, nested])?;
+
+    assert!(
+        !repository
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::MissingComponentConfig)
+    );
+    Ok(())
+}
+
+#[test]
 fn nested_model_index_components_resolve_from_the_declaring_directory()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
@@ -332,11 +441,149 @@ fn executable_metadata_is_preserved_but_reported_inert() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn custom_component_and_class_locators_are_reported_inert() -> Result<(), Box<dyn std::error::Error>>
+{
+    let documents = vec![
+        SourceDocument::parse(
+            "model_index.json",
+            br#"{
+                "_class_name":"Pipeline",
+                "standard":["diffusers","Standard"],
+                "custom":["my_private_library","Custom"]
+            }"#,
+        )?,
+        SourceDocument::parse("standard/config.json", br#"{"model_type":"standard"}"#)?,
+        SourceDocument::parse("custom/config.json", br#"{"model_type":"custom"}"#)?,
+        SourceDocument::parse(
+            "tokenizer_config.json",
+            br#"{
+                "tokenizer_class":"CustomTokenizer",
+                "slow_tokenizer_class":"SlowTokenizer",
+                "auto_map":{"AutoTokenizer":"custom.Tokenizer"}
+            }"#,
+        )?,
+        SourceDocument::parse(
+            "processor_config.json",
+            br#"{
+                "processor_class":"CustomProcessor",
+                "image_processor_type":"CustomImageProcessor",
+                "auto_map":{"AutoProcessor":"custom.Processor"}
+            }"#,
+        )?,
+    ];
+    let diagnostics = ModelRepository::from_documents(documents)?.diagnostics();
+    let inert_paths = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::ExecutableReferenceInert)
+        .filter_map(|diagnostic| diagnostic.json_path.as_deref())
+        .collect::<Vec<_>>();
+
+    for pointer in [
+        "/custom",
+        "/tokenizer_class",
+        "/slow_tokenizer_class",
+        "/processor_class",
+        "/image_processor_type",
+    ] {
+        assert!(
+            inert_paths.contains(&pointer),
+            "missing inert diagnostic at {pointer}"
+        );
+    }
+    assert!(!inert_paths.contains(&"/standard"));
+    Ok(())
+}
+
+#[test]
+fn ordinary_built_in_class_names_are_opaque_identity_not_custom_code()
+-> Result<(), Box<dyn std::error::Error>> {
+    let documents = vec![
+        SourceDocument::parse(
+            "tokenizer_config.json",
+            br#"{"tokenizer_class":"LlamaTokenizerFast"}"#,
+        )?,
+        SourceDocument::parse(
+            "processor_config.json",
+            br#"{"processor_class":"CLIPProcessor","image_processor_type":"CLIPImageProcessor"}"#,
+        )?,
+    ];
+    let diagnostics = ModelRepository::from_documents(documents)?.diagnostics();
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::ExecutableReferenceInert)
+    );
+    Ok(())
+}
+
+#[test]
+fn joined_reference_paths_are_revalidated_against_total_length()
+-> Result<(), Box<dyn std::error::Error>> {
+    let base = "a/".repeat(480);
+    let child = "x".repeat(model_configs::MAX_REPOSITORY_PATH_SEGMENT_BYTES);
+    let documents = vec![
+        SourceDocument::parse(
+            format!("{base}model_index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "_class_name": "Pipeline",
+                (child.clone()): ["diffusers", "Component"]
+            }))?,
+        )?,
+        SourceDocument::parse(
+            format!("{base}model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": {"tensor": child.clone()}
+            }))?,
+        )?,
+        SourceDocument::parse(
+            format!("{base}adapter_config.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "base_model_name_or_path": format!("./{child}"),
+                "peft_type": "LORA"
+            }))?,
+        )?,
+    ];
+    let diagnostics = ModelRepository::from_documents(documents)?.diagnostics();
+
+    for code in [
+        DiagnosticCode::UnsafeReferencePath,
+        DiagnosticCode::UnsafeCheckpointShardPath,
+        DiagnosticCode::UnsafeAdapterBasePath,
+    ] {
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.code == code),
+            "missing joined-path diagnostic {code}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn every_typed_format_reports_wrong_field_shapes() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let files = [
-        ("config.json", r#"{"model_type":"ok","vocab_size":"bad"}"#),
-        ("generation_config.json", r#"{"max_length":"bad"}"#),
+        (
+            "config.json",
+            r#"{"model_type":"ok","vocab_size":"bad","_diffusers_version":7,"text_config":"bad"}"#,
+        ),
+        (
+            "generation_config.json",
+            r#"{
+                "max_length":"bad",
+                "output_logits":"yes",
+                "disable_compile":1,
+                "is_assistant":[],
+                "max_time":"soon",
+                "num_return_sequences":false,
+                "guidance_scale":{},
+                "cache_config":[],
+                "stop_strings":["ok",7],
+                "eos_token_id":[1,"bad"],
+                "bos_token_id":[1],
+                "dola_layers":[1,"bad"]
+            }"#,
+        ),
         ("tokenizer_config.json", r#"{"tokenizer_class":42}"#),
         ("preprocessor_config.json", r#"{"do_resize":"bad"}"#),
         ("processor_config.json", r#"{"patch_size":false}"#),
@@ -356,7 +603,20 @@ fn every_typed_format_reports_wrong_field_shapes() -> Result<(), Box<dyn std::er
 
     for pointer in [
         "/vocab_size",
+        "/_diffusers_version",
+        "/text_config",
         "/max_length",
+        "/output_logits",
+        "/disable_compile",
+        "/is_assistant",
+        "/max_time",
+        "/num_return_sequences",
+        "/guidance_scale",
+        "/cache_config",
+        "/stop_strings",
+        "/eos_token_id",
+        "/bos_token_id",
+        "/dola_layers",
         "/tokenizer_class",
         "/do_resize",
         "/patch_size",
@@ -369,6 +629,40 @@ fn every_typed_format_reports_wrong_field_shapes() -> Result<(), Box<dyn std::er
             "missing diagnostic for {pointer}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn legacy_generation_fields_in_config_receive_shape_diagnostics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let config = SourceDocument::parse(
+        "config.json",
+        br#"{"model_type":"x","max_length":"bad","disable_compile":1}"#,
+    )?;
+    let diagnostics = ModelRepository::from_documents(vec![config])?.diagnostics();
+
+    for pointer in ["/max_length", "/disable_compile"] {
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == DiagnosticCode::InvalidDocumentShape
+                && diagnostic.json_path.as_deref() == Some(pointer)
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn signed_generation_top_k_is_a_valid_integer_source_value()
+-> Result<(), Box<dyn std::error::Error>> {
+    let documents = vec![
+        SourceDocument::parse("config.json", br#"{"model_type":"x","top_k":-1}"#)?,
+        SourceDocument::parse("generation_config.json", br#"{"top_k":-1}"#)?,
+    ];
+    let diagnostics = ModelRepository::from_documents(documents)?.diagnostics();
+
+    assert!(!diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::InvalidDocumentShape
+            && diagnostic.json_path.as_deref() == Some("/top_k")
+    }));
     Ok(())
 }
 
