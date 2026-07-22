@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use unicode_casefold::UnicodeCaseFold;
@@ -26,8 +26,8 @@ pub const MAX_REPOSITORY_SOURCE_BYTES: u64 = 256 * 1024 * 1024;
 /// and component existence is validated from path metadata alone.
 #[derive(Clone, Debug, Default)]
 pub struct RepositoryInventory {
-    files: BTreeSet<PathBuf>,
-    directories: BTreeSet<PathBuf>,
+    files: BTreeMap<String, PathBuf>,
+    directories: BTreeMap<String, PathBuf>,
 }
 
 impl RepositoryInventory {
@@ -35,8 +35,8 @@ impl RepositoryInventory {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            files: BTreeSet::new(),
-            directories: BTreeSet::new(),
+            files: BTreeMap::new(),
+            directories: BTreeMap::new(),
         }
     }
 
@@ -65,27 +65,29 @@ impl RepositoryInventory {
     /// Returns regular files in ascending logical-path order.
     #[must_use]
     pub fn files(&self) -> impl ExactSizeIterator<Item = &Path> {
-        self.files.iter().map(PathBuf::as_path)
+        self.files.values().map(PathBuf::as_path)
     }
 
     /// Returns directories in ascending logical-path order.
     #[must_use]
     pub fn directories(&self) -> impl ExactSizeIterator<Item = &Path> {
-        self.directories.iter().map(PathBuf::as_path)
+        self.directories.values().map(PathBuf::as_path)
     }
 
     fn insert(&mut self, path: &Path, file: bool) -> Result<bool, ConfigError> {
         crate::path_serde::validate(path)?;
+        let portable = crate::path_serde::portable(path);
         let already_present = if file {
-            self.files.contains(path)
+            self.files.contains_key(&portable)
         } else {
-            self.directories.contains(path)
+            self.directories.contains_key(&portable)
         };
         let mut parents = Vec::new();
         let mut parent = path.parent();
         while let Some(directory) = parent.filter(|directory| !directory.as_os_str().is_empty()) {
-            if !self.directories.contains(directory) {
-                parents.push(directory.to_path_buf());
+            let portable = crate::path_serde::portable(directory);
+            if !self.directories.contains_key(&portable) {
+                parents.push((portable, directory.to_path_buf()));
             }
             parent = directory.parent();
         }
@@ -102,7 +104,7 @@ impl RepositoryInventory {
         } else {
             &mut self.directories
         };
-        let inserted = target.insert(path.to_path_buf());
+        let inserted = target.insert(portable, path.to_path_buf()).is_none();
         self.directories.extend(parents);
         Ok(inserted)
     }
@@ -113,8 +115,9 @@ impl RepositoryInventory {
 pub struct ModelRepository {
     root: PathBuf,
     documents: Vec<SourceDocument>,
-    files: Vec<PathBuf>,
-    directories: Vec<PathBuf>,
+    document_keys: Vec<String>,
+    files: Vec<String>,
+    directories: Vec<String>,
     scan_diagnostics: Vec<Diagnostic>,
 }
 
@@ -144,9 +147,9 @@ impl ModelRepository {
             &mut scan_diagnostics,
             &mut entries_seen,
         )?;
-        paths.sort();
-        files.sort();
-        directories.sort();
+        sort_paths_portably(&mut paths);
+        sort_paths_portably(&mut files);
+        sort_paths_portably(&mut directories);
         validate_no_portable_collisions(&files, &directories)?;
         let source_sizes = paths
             .iter()
@@ -175,11 +178,13 @@ impl ModelRepository {
             )?;
             documents.push(document);
         }
+        let document_keys = portable_document_keys(&documents);
         Ok(Self {
             root,
             documents,
-            files,
-            directories,
+            document_keys,
+            files: portable_paths(files),
+            directories: portable_paths(directories),
             scan_diagnostics,
         })
     }
@@ -219,16 +224,18 @@ impl ModelRepository {
                 limit: MAX_REPOSITORY_DOCUMENTS,
             });
         }
-        documents.sort_by(|left, right| left.relative_path().cmp(right.relative_path()));
+        documents
+            .sort_by_cached_key(|document| crate::path_serde::portable(document.relative_path()));
+        let document_keys = portable_document_keys(&documents);
         check_document_resource_limits(
             documents
                 .iter()
                 .map(|document| (document.relative_path(), document.original().len() as u64)),
         )?;
-        for pair in documents.windows(2) {
-            if pair[0].relative_path() == pair[1].relative_path() {
+        for (index, pair) in document_keys.windows(2).enumerate() {
+            if pair[0] == pair[1] {
                 return Err(ConfigError::DuplicateDocumentPath(
-                    pair[0].relative_path().to_path_buf(),
+                    documents[index].relative_path().to_path_buf(),
                 ));
             }
         }
@@ -240,8 +247,9 @@ impl ModelRepository {
         Ok(Self {
             root: PathBuf::new(),
             documents,
-            files,
-            directories,
+            document_keys,
+            files: portable_paths(files),
+            directories: portable_paths(directories),
             scan_diagnostics: Vec::new(),
         })
     }
@@ -265,8 +273,10 @@ impl ModelRepository {
     #[must_use]
     pub fn document(&self, relative_path: impl AsRef<Path>) -> Option<&SourceDocument> {
         let relative_path = relative_path.as_ref();
-        self.documents
-            .binary_search_by(|document| document.relative_path().cmp(relative_path))
+        crate::path_serde::validate(relative_path).ok()?;
+        let portable = crate::path_serde::portable(relative_path);
+        self.document_keys
+            .binary_search(&portable)
             .ok()
             .map(|index| &self.documents[index])
     }
@@ -305,17 +315,20 @@ impl ModelRepository {
     }
 
     pub(crate) fn has_file(&self, relative_path: &Path) -> bool {
-        self.files
-            .binary_search_by(|candidate| candidate.as_path().cmp(relative_path))
-            .is_ok()
+        crate::path_serde::validate(relative_path).is_ok()
+            && self
+                .files
+                .binary_search(&crate::path_serde::portable(relative_path))
+                .is_ok()
     }
 
     pub(crate) fn has_directory(&self, relative_path: &Path) -> bool {
         relative_path.as_os_str().is_empty()
-            || self
-                .directories
-                .binary_search_by(|candidate| candidate.as_path().cmp(relative_path))
-                .is_ok()
+            || (crate::path_serde::validate(relative_path).is_ok()
+                && self
+                    .directories
+                    .binary_search(&crate::path_serde::portable(relative_path))
+                    .is_ok())
     }
 
     pub(crate) fn has_entry(&self, relative_path: &Path) -> bool {
@@ -326,10 +339,28 @@ impl ModelRepository {
 impl RepositoryInventory {
     fn into_vectors(self) -> (Vec<PathBuf>, Vec<PathBuf>) {
         (
-            self.files.into_iter().collect(),
-            self.directories.into_iter().collect(),
+            self.files.into_values().collect(),
+            self.directories.into_values().collect(),
         )
     }
+}
+
+fn sort_paths_portably(paths: &mut [PathBuf]) {
+    paths.sort_by_cached_key(|path| crate::path_serde::portable(path));
+}
+
+fn portable_paths(paths: Vec<PathBuf>) -> Vec<String> {
+    paths
+        .into_iter()
+        .map(|path| crate::path_serde::portable(&path))
+        .collect()
+}
+
+fn portable_document_keys(documents: &[SourceDocument]) -> Vec<String> {
+    documents
+        .iter()
+        .map(|document| crate::path_serde::portable(document.relative_path()))
+        .collect()
 }
 
 fn validate_no_portable_collisions(

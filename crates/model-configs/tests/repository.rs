@@ -125,7 +125,14 @@ fn diffusers_index_extracts_present_and_optional_components()
     assert_eq!(normalized.components[0].name, "safety_checker");
     assert!(normalized.components[0].optional);
     assert_eq!(normalized.components[1].path(), Some(Path::new("unet")));
-    assert_eq!(normalized.applied_defaults.len(), 1);
+    assert_eq!(
+        normalized.applied_defaults,
+        vec![model_configs::AppliedDefault {
+            field: "/components/unet/path".into(),
+            value: serde_json::json!("unet"),
+            rule: "diffusers-component-name-is-path-v1".into(),
+        }]
+    );
     assert!(repository.diagnostics().is_empty());
     Ok(())
 }
@@ -418,5 +425,130 @@ fn canonically_equivalent_logical_paths_are_not_jointly_portable()
     let decomposed = SourceDocument::parse("cafe\u{301}/config.json", br#"{"model_type":"b"}"#)?;
 
     assert!(ModelRepository::from_documents(vec![composed, decomposed]).is_err());
+    Ok(())
+}
+
+#[test]
+fn repository_paths_use_portable_utf8_order_on_every_host() -> Result<(), Box<dyn std::error::Error>>
+{
+    let private_use_path = "\u{e000}/config.json";
+    let supplementary_path = "\u{10000}/config.json";
+    let private_use = SourceDocument::parse(private_use_path, br#"{"model_type":"private"}"#)?;
+    let supplementary =
+        SourceDocument::parse(supplementary_path, br#"{"model_type":"supplementary"}"#)?;
+    let repository = ModelRepository::from_documents(vec![supplementary, private_use])?;
+    let paths = repository
+        .documents()
+        .iter()
+        .map(SourceDocument::relative_path)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        paths,
+        vec![Path::new(private_use_path), Path::new(supplementary_path)]
+    );
+    assert_eq!(
+        repository
+            .document(private_use_path)
+            .and_then(SourceDocument::json)
+            .and_then(|value| value.get("model_type")),
+        Some(&serde_json::json!("private"))
+    );
+    assert!(repository.document(supplementary_path).is_some());
+
+    let mut inventory = model_configs::RepositoryInventory::new();
+    inventory.insert_file(supplementary_path)?;
+    inventory.insert_file(private_use_path)?;
+    let inventory_paths = inventory
+        .files()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inventory_paths,
+        vec![private_use_path.to_owned(), supplementary_path.to_owned()]
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_scan_skips_file_and_directory_symlinks_with_relative_diagnostics()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::symlink;
+
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(root.path().join("config.json"), r#"{"model_type":"root"}"#)?;
+    fs::write(
+        outside.path().join("generation_config.json"),
+        r#"{"top_p":0.9}"#,
+    )?;
+    fs::write(
+        outside.path().join("config.json"),
+        r#"{"model_type":"outside"}"#,
+    )?;
+    symlink(outside.path(), root.path().join("linked-component"))?;
+    symlink(
+        outside.path().join("generation_config.json"),
+        root.path().join("generation_config.json"),
+    )?;
+
+    let repository = ModelRepository::read(root.path())?;
+    assert_eq!(repository.documents().len(), 1);
+    assert_eq!(
+        repository.documents()[0].relative_path(),
+        Path::new("config.json")
+    );
+    let mut skipped = repository
+        .diagnostics()
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == DiagnosticCode::SymlinkSkipped)
+        .filter_map(|diagnostic| {
+            diagnostic
+                .related_path()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .collect::<Vec<_>>();
+    skipped.sort();
+    assert_eq!(
+        skipped,
+        vec![
+            "generation_config.json".to_owned(),
+            "linked-component".to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn large_component_repository_keeps_reference_validation_indexed()
+-> Result<(), Box<dyn std::error::Error>> {
+    const COMPONENTS: usize = 2_000;
+    let mut index = serde_json::Map::new();
+    index.insert(
+        "_class_name".into(),
+        serde_json::Value::String("LargePipeline".into()),
+    );
+    let mut documents = Vec::with_capacity(COMPONENTS * 2 + 1);
+    for number in 0..COMPONENTS {
+        let name = format!("component_{number:04}");
+        index.insert(name.clone(), serde_json::json!(["diffusers", "Component"]));
+        documents.push(SourceDocument::parse(
+            format!("{name}/config.json"),
+            br#"{"_class_name":"Component"}"#,
+        )?);
+        documents.push(SourceDocument::parse(
+            format!("unrelated_{number:04}/config.json"),
+            br#"{"_class_name":"Unrelated"}"#,
+        )?);
+    }
+    documents.push(SourceDocument::parse(
+        "model_index.json",
+        serde_json::to_vec(&index)?,
+    )?);
+
+    let repository = ModelRepository::from_documents(documents)?;
+    assert_eq!(repository.normalized()?.components.len(), COMPONENTS);
+    assert!(repository.diagnostics().is_empty());
     Ok(())
 }
