@@ -17,10 +17,13 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+unicode-casefold.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
 
 [lints]
 workspace = true
-
