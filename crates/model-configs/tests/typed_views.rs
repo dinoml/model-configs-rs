@@ -51,6 +51,52 @@ fn config_view_exposes_typed_fields_and_only_unknown_extras()
 }
 
 #[test]
+fn config_view_exposes_legacy_task_without_reporting_it_as_extra()
+-> Result<(), Box<dyn std::error::Error>> {
+    let document = model_configs::SourceDocument::parse(
+        "config.json",
+        br#"{"pipeline_tag":"text-generation","task":"legacy-task","future":true}"#,
+    )?;
+    let TypedDocumentView::Config(view) = TypedDocumentView::try_from(&document)? else {
+        return Err("expected config view".into());
+    };
+
+    assert_eq!(
+        (
+            view.pipeline_tag(),
+            view.task(),
+            view.extra().collect::<Vec<_>>(),
+        ),
+        (
+            SourceField::Value("text-generation"),
+            SourceField::Value("legacy-task"),
+            vec![("future", &json!(true))],
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn model_index_view_exposes_legacy_task_as_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let document = model_configs::SourceDocument::parse(
+        "model_index.json",
+        br#"{"_class_name":"Pipeline","task":"legacy-task","future":true}"#,
+    )?;
+    let TypedDocumentView::ModelIndex(view) = TypedDocumentView::try_from(&document)? else {
+        return Err("expected model index view".into());
+    };
+
+    assert_eq!(
+        (view.task(), view.extra().collect::<Vec<_>>()),
+        (
+            SourceField::Value("legacy-task"),
+            vec![("future", &json!(true))],
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn every_supported_document_kind_has_a_typed_view() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let files = [

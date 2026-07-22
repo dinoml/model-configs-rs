@@ -493,6 +493,7 @@ json_view!(
         "model_type",
         "transformers_version",
         "pipeline_tag",
+        "task",
         "auto_map",
         "torch_dtype",
         "tie_word_embeddings",
@@ -556,6 +557,12 @@ impl<'a> ConfigView<'a> {
     #[must_use]
     pub fn pipeline_tag(&self) -> SourceField<'a, &'a str> {
         string_field(self.raw(), "pipeline_tag")
+    }
+
+    /// Returns the source-provided legacy task alias.
+    #[must_use]
+    pub fn task(&self) -> SourceField<'a, &'a str> {
+        string_field(self.raw(), "task")
     }
 
     /// Returns the unmodified automatic-class mapping.
@@ -1711,6 +1718,12 @@ impl<'a> ModelIndexView<'a> {
     #[must_use]
     pub fn pipeline_tag(&self) -> SourceField<'a, &'a str> {
         string_field(self.raw(), "pipeline_tag")
+    }
+
+    /// Returns the source-provided legacy task alias.
+    #[must_use]
+    pub fn task(&self) -> SourceField<'a, &'a str> {
+        string_field(self.raw(), "task")
     }
 
     /// Iterates over inert component tuples in source order.

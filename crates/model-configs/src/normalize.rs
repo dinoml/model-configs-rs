@@ -292,6 +292,7 @@ pub(crate) fn manifest_sensitive_text(value: &str) -> bool {
             .iter()
             .any(|marker| lower.contains(marker));
     value.starts_with(['/', '\\', '~'])
+        || lower.starts_with("file://")
         || windows_absolute
         || lower.contains("/.cache/huggingface")
         || lower.contains("\\.cache\\huggingface")
@@ -318,41 +319,46 @@ pub(crate) fn manifest_sensitive_json_pointer(value: &str) -> bool {
 
 fn manifest_sensitive_key(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
+    let compact = key
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>();
     let safe_special_token = matches!(
-        key.as_str(),
-        "bos_token"
-            | "eos_token"
-            | "unk_token"
-            | "sep_token"
-            | "pad_token"
-            | "cls_token"
-            | "mask_token"
-            | "additional_special_tokens"
+        compact.as_str(),
+        "bostoken"
+            | "eostoken"
+            | "unktoken"
+            | "septoken"
+            | "padtoken"
+            | "clstoken"
+            | "masktoken"
+            | "additionalspecialtokens"
     );
-    matches!(
-        key.as_str(),
-        "_name_or_path"
-            | "name_or_path"
-            | "chat_template"
-            | "authorization"
-            | "password"
-            | "passwd"
-            | "secret"
-            | "client_secret"
-            | "api_key"
-            | "credential"
-            | "credentials"
-            | "token"
-            | "use_auth_token"
-            | "auth_token"
-            | "access_token"
-            | "api_token"
-            | "hf_token"
-    ) || key.contains("password")
-        || key.contains("credential")
-        || key.ends_with("_secret")
-        || key.ends_with("_api_key")
-        || (!safe_special_token && key.ends_with("_token"))
+    matches!(compact.as_str(), "nameorpath" | "chattemplate")
+        || matches!(
+            compact.as_str(),
+            "authorization"
+                | "password"
+                | "passwd"
+                | "secret"
+                | "clientsecret"
+                | "apikey"
+                | "credential"
+                | "credentials"
+                | "token"
+                | "useauthtoken"
+                | "authtoken"
+                | "accesstoken"
+                | "apitoken"
+                | "hftoken"
+                | "secretkey"
+                | "privatekey"
+        )
+        || compact.contains("password")
+        || compact.contains("credential")
+        || compact.ends_with("secret")
+        || compact.ends_with("apikey")
+        || (!safe_special_token && compact.ends_with("token"))
 }
 
 fn redact_string(value: &mut String) {

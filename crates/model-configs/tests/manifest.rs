@@ -6,6 +6,7 @@ use model_configs::{
     CompatibilityManifest, DiagnosticCode, MANIFEST_SCHEMA_VERSION, MAX_REPOSITORY_DIAGNOSTICS,
     MAX_REPOSITORY_DOCUMENTS, ManifestReadError, ModelRepository, NORMALIZATION_PROFILE,
 };
+use serde_json::json;
 
 #[test]
 fn manifest_is_stable_across_file_creation_order() -> Result<(), Box<dyn std::error::Error>> {
@@ -251,6 +252,61 @@ fn manifest_projection_omits_source_only_secrets_paths_and_templates()
     ] {
         assert!(!json.contains(secret), "manifest leaked {secret}");
     }
+    Ok(())
+}
+
+#[test]
+fn manifest_projection_filters_compact_credentials_and_file_uris()
+-> Result<(), Box<dyn std::error::Error>> {
+    let document = model_configs::SourceDocument::parse(
+        "config.json",
+        br#"{
+            "model_type":"example",
+            "future":{
+                "apiKey":"api-key-value",
+                "accessToken":"access-token-value",
+                "authToken":"auth-token-value",
+                "clientSecret":"client-secret-value",
+                "useAuthToken":"use-auth-token-value",
+                "hfToken":"hf-token-value",
+                "secret_key":"secret-key-value",
+                "private_key":"private-key-value",
+                "api-key":"hyphenated-api-key-value",
+                "private.key":"dotted-private-key-value",
+                "posixFile":"file:///home/alice/private/model",
+                "windowsFile":"file:///C:/Users/Alice/private/model",
+                "safe":"https://example.com/models/public"
+            }
+        }"#,
+    )?;
+    let manifest = ModelRepository::from_documents(vec![document])?.manifest()?;
+    let future = manifest
+        .normalized
+        .as_ref()
+        .and_then(|normalized| normalized.extra.get("future"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or("missing future manifest data")?;
+
+    for key in [
+        "apiKey",
+        "accessToken",
+        "authToken",
+        "clientSecret",
+        "useAuthToken",
+        "hfToken",
+        "secret_key",
+        "private_key",
+        "api-key",
+        "private.key",
+    ] {
+        assert!(!future.contains_key(key), "manifest retained {key}");
+    }
+    assert_eq!(future.get("posixFile"), Some(&json!("<redacted>")));
+    assert_eq!(future.get("windowsFile"), Some(&json!("<redacted>")));
+    assert_eq!(
+        future.get("safe"),
+        Some(&json!("https://example.com/models/public"))
+    );
     Ok(())
 }
 
