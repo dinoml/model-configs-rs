@@ -1,0 +1,3 @@
+# Serde's derive stack uses syn 2 while thiserror 2 uses syn 3. These are
+# compile-time-only dependencies and Cargo cannot unify their major versions.
+allowed-duplicate-crates = ["syn"]
