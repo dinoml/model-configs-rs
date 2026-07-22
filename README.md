@@ -42,6 +42,10 @@ diagnostic retention, portable path length, and serialized manifest size.
 
 ## Usage
 
+The expanded [documentation](docs/README.md) covers filesystem and Hub/cache
+integration, lossless source access, typed views, normalization, diagnostics,
+source selection, compatibility manifests, and the crate's security boundary.
+
 Read a materialized repository and produce a deterministic manifest:
 
 ```rust
